@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHEEPER — You talk, it ships.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b; --bg-up: #111113; --bg-card: #161618;
+      --bdr: rgba(255,255,255,0.06); --bdr-a: rgba(255,255,255,0.15);
+      --txt: #c8c8cc; --dim: #5a5a60; --bright: #eeeef0;
+      --acc: #39ff14; --acc-d: rgba(57,255,20,0.08); --acc-m: rgba(57,255,20,0.15);
+      --red: #ff3b30; --red-d: rgba(255,59,48,0.1);
+      --warn: #ffcc00;
+      --mono: 'JetBrains Mono', monospace; --sans: 'Outfit', sans-serif;
+    }
+    body { font-family: var(--sans); background: var(--bg); color: var(--txt); min-height: 100vh; line-height: 1.5; }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        linear-gradient(45deg, rgba(255,255,255,0.015) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(255,255,255,0.015) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.015) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.015) 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+    }
+    .view { display: none; min-height: 100vh; position: relative; z-index: 1; }
+    .view.active { display: flex; flex-direction: column; }
+    .input {
+      width: 100%; padding: 0.75rem 1rem; background: var(--bg-up);
+      border: 1px solid var(--bdr); border-radius: 4px; color: var(--txt);
+      font-family: var(--mono); font-size: 0.875rem; outline: none; transition: border-color 0.15s;
+    }
+    .input:focus { border-color: var(--acc); }
+    .input::placeholder { color: var(--dim); }
+    textarea.input { min-height: 80px; resize: vertical; line-height: 1.5; }
+    .btn {
+      padding: 0.625rem 1.25rem; border: none; border-radius: 3px;
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 500;
+      cursor: pointer; letter-spacing: 0.05em; text-transform: uppercase;
+      transition: all 0.15s; display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    .btn-p { background: var(--acc); color: var(--bg); }
+    .btn-p:hover { filter: brightness(1.15); }
+    .btn-p:disabled { opacity: 0.3; cursor: not-allowed; filter: none; }
+    .btn-g { background: transparent; color: var(--txt); border: 1px solid var(--bdr); }
+    .btn-g:hover { border-color: var(--bdr-a); }
+    .btn-d { background: var(--red-d); color: var(--red); border: 1px solid rgba(255,59,48,0.2); }
+    .btn-d:hover { background: rgba(255,59,48,0.15); }
+    .btn-a { background: var(--acc-d); color: var(--acc); border: 1px solid var(--acc-m); }
+    .btn-a:hover { background: var(--acc-m); }
+    .btn-s { padding: 0.375rem 0.75rem; font-size: 0.6875rem; }
+    .mono { font-family: var(--mono); }
+    .hdr {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--bdr); background: var(--bg-up);
+    }
+    .hdr-l { display: flex; align-items: center; gap: 1.5rem; }
+    .hdr-b { font-family: var(--mono); font-size: 0.875rem; font-weight: 600; color: var(--bright); letter-spacing: 0.12em; }
+    .nav-b {
+      padding: 0.375rem 0.75rem; background: none; border: 1px solid transparent;
+      border-radius: 3px; font-family: var(--mono); font-size: 0.6875rem;
+      color: var(--dim); cursor: pointer; letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    .nav-b:hover { color: var(--txt); border-color: var(--bdr); }
+    .nav-b.on { color: var(--acc); border-color: var(--acc-m); background: var(--acc-d); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--acc); }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(57,255,20,0.3)} 50%{box-shadow:0 0 0 4px rgba(57,255,20,0)} }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .spinner { width:12px;height:12px;border:2px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:spin .6s linear infinite; }
+
+    /* Auth */
+    #authV { align-items: center; justify-content: center; padding: 2rem; }
+    .auth-box { width: 100%; max-width: 360px; text-align: center; }
+    .auth-logo { font-family: var(--mono); font-size: 1.75rem; font-weight: 600; color: var(--bright); letter-spacing: 0.15em; margin-bottom: 0.25rem; }
+    .auth-tag { font-family: var(--mono); font-size: 0.6875rem; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 2.5rem; }
+    .auth-err { color: var(--red); font-family: var(--mono); font-size: 0.75rem; margin-top: 0.75rem; display: none; }
+
+    /* Modal */
+    .modal-ov { position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center;z-index:100;padding:2rem; }
+    .modal-ov.on { display: flex; }
+    .modal { width:100%;max-width:560px;background:var(--bg-card);border:1px solid var(--bdr);border-radius:6px;padding:2rem;max-height:90vh;overflow-y:auto; }
+    .modal h2 { font-size:1.125rem;font-weight:600;color:var(--bright);margin-bottom:1.5rem; }
+    .fg { margin-bottom: 1.25rem; }
+    .fl { display:block;font-family:var(--mono);font-size:0.6875rem;color:var(--dim);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.375rem; }
+    .fh { font-family:var(--mono);font-size:0.625rem;color:var(--dim);margin-top:0.25rem;opacity:0.7; }
+    .fr { display:grid;grid-template-columns:1fr 1fr;gap:1rem; }
+    .ma { display:flex;gap:0.75rem;justify-content:flex-end;margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid var(--bdr); }
+
+    /* Workspace layout */
+    .ws { display:grid;grid-template-columns:280px 1fr;flex:1;min-height:0; }
+    @media(max-width:768px){ .ws{grid-template-columns:1fr} .sb{display:none} }
+    .sb { border-right:1px solid var(--bdr);padding:1.25rem;display:flex;flex-direction:column;gap:1rem;overflow-y:auto;background:var(--bg-up); }
+    .sb-t { font-family:var(--mono);font-size:0.625rem;font-weight:600;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase; }
+    .wm { padding:2rem;display:flex;flex-direction:column;gap:1.5rem;overflow-y:auto; }
+
+    /* Step items */
+    .si { display:flex;align-items:flex-start;gap:0.75rem;padding:0.625rem 0.75rem;border-radius:3px; }
+    .si.click { cursor:pointer; }
+    .si.click:hover { background:var(--bg-card); }
+    .si.act { background:var(--acc-d); }
+    .sm {
+      width:20px;height:20px;border-radius:50%;border:2px solid var(--bdr);
+      display:flex;align-items:center;justify-content:center;flex-shrink:0;
+      font-family:var(--mono);font-size:0.5625rem;color:var(--dim);margin-top:1px;
+    }
+    .si.done .sm { border-color:var(--acc);background:var(--acc);color:var(--bg); }
+    .si.cur .sm { border-color:var(--acc);color:var(--acc);animation:pulse 2s infinite; }
+    .sn { font-size:0.8125rem;font-weight:500;line-height:1.3; }
+    .si.done .sn { color:var(--acc); }
+    .si.cur .sn { color:var(--bright); }
+    .si.pen .sn { color:var(--dim); }
+    .sf { font-family:var(--mono);font-size:0.5625rem;color:var(--dim);margin-top:0.125rem; }
+
+    /* Output */
+    .ob { background:var(--bg-up);border:1px solid var(--bdr);border-radius:4px;padding:1.25rem; }
+    .ot { font-family:var(--mono);font-size:0.625rem;font-weight:600;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.75rem; }
+    .of { display:flex;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.75rem;padding:0.125rem 0; }
+    .of .a { font-size:0.5625rem;padding:0.125rem 0.375rem;border-radius:2px;text-transform:uppercase;letter-spacing:0.05em; }
+    .of .cr { color:var(--acc);background:var(--acc-d); }
+    .of .md { color:var(--warn);background:rgba(255,204,0,0.08); }
+    .pl {
+      display:inline-flex;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.75rem;
+      color:var(--acc);text-decoration:none;margin-top:1rem;padding:0.5rem 0.75rem;
+      background:var(--acc-d);border:1px solid var(--acc-m);border-radius:3px;
+    }
+    .pl:hover { background:var(--acc-m); }
+
+    /* Log */
+    .lp { background:var(--bg-up);border:1px solid var(--bdr);border-radius:4px;padding:0.75rem;max-height:200px;overflow-y:auto;margin-top:auto; }
+    .le { font-family:var(--mono);font-size:0.6875rem;color:var(--dim);display:flex;gap:0.5rem;padding:0.125rem 0; }
+    .le .t { opacity:0.5; }
+    .le.ok .m { color:var(--acc); }
+    .le.er .m { color:var(--red); }
+    .le.in .m { color:var(--txt); }
+
+    /* Drop zone */
+    .dz {
+      border:1px dashed var(--bdr);border-radius:4px;padding:1.25rem;text-align:center;
+      cursor:pointer;transition:all 0.15s;position:relative;
+    }
+    .dz:hover,.dz.over { border-color:var(--acc);background:var(--acc-d); }
+    .dz input[type="file"] { position:absolute;inset:0;opacity:0;cursor:pointer; }
+    .fc { display:flex;flex-wrap:wrap;gap:0.375rem; }
+    .fci {
+      display:inline-flex;align-items:center;gap:0.25rem;padding:0.25rem 0.5rem;
+      background:var(--acc-d);border:1px solid var(--acc-m);border-radius:3px;
+      font-family:var(--mono);font-size:0.6875rem;color:var(--acc);
+    }
+    .fci button { background:none;border:none;color:var(--dim);cursor:pointer;font-size:0.875rem;line-height:1;padding:0; }
+    .fci button:hover { color:var(--red); }
+    .eb { display:none;padding:1rem;background:var(--red-d);border:1px solid rgba(255,59,48,0.2);border-radius:4px;font-family:var(--mono);font-size:0.8125rem;color:var(--red); }
+    .eb.on { display:block; }
+  </style>
+</head>
+<body>
+
+  <!-- AUTH -->
+  <div id="authV" class="view active">
+    <div class="auth-box">
+      <div class="auth-logo">SHEEPER</div>
+      <div class="auth-tag">You talk, it ships.</div>
+      <input type="password" id="tokIn" class="input" placeholder="Access token" autofocus>
+      <div id="authErr" class="auth-err">Invalid token. Try again.</div>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dashV" class="view">
+    <div class="hdr">
+      <div class="hdr-l"><div class="hdr-b">SHEEPER</div></div>
+      <div style="display:flex;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.6875rem;color:var(--dim)"><div class="dot"></div>Ready</div>
+    </div>
+    <div style="max-width:800px;margin:0 auto;width:100%;padding:2rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;">
+        <div style="font-size:1.25rem;font-weight:600;color:var(--bright)">Projects</div>
+        <button class="btn btn-p" onclick="showModal()">+ New Project</button>
+      </div>
+      <div id="pList"></div>
+    </div>
+  </div>
+
+  <!-- WORKSPACE -->
+  <div id="workV" class="view">
+    <div class="hdr">
+      <div class="hdr-l">
+        <div class="hdr-b">SHEEPER</div>
+        <div style="display:flex;gap:0.25rem;">
+          <button class="nav-b on" data-m="build" onclick="setMode('build')">Build</button>
+          <button class="nav-b" data-m="edit" onclick="setMode('edit')">Edit</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:1rem;">
+        <div style="display:flex;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.6875rem;color:var(--dim)">
+          <div class="dot"></div><span id="hName">—</span>
+        </div>
+        <button class="btn btn-g btn-s" onclick="toDash()">← Projects</button>
+      </div>
+    </div>
+    <div class="ws" style="flex:1;">
+      <div class="sb" id="sideB">
+        <div class="sb-t">Build Plan</div>
+        <div id="sList"></div>
+        <div class="lp" id="logP"><div id="logE"></div></div>
+      </div>
+      <div class="wm" id="wMain"></div>
+    </div>
+  </div>
+
+  <!-- NEW PROJECT MODAL -->
+  <div id="npModal" class="modal-ov">
+    <div class="modal">
+      <h2>New Project</h2>
+      <div class="fr">
+        <div class="fg"><label class="fl">GitHub Owner</label><input type="text" id="npO" class="input" placeholder="bdod-prod"></div>
+        <div class="fg"><label class="fl">Repository</label><input type="text" id="npR" class="input" placeholder="my-site"><div class="fh">Must already exist on GitHub</div></div>
+      </div>
+      <div class="fg"><label class="fl">Site Name</label><input type="text" id="npN" class="input" placeholder="My Awesome Site"></div>
+      <div class="fr">
+        <div class="fg"><label class="fl">Domain (optional)</label><input type="text" id="npD" class="input" placeholder="mysite.com"></div>
+        <div class="fg"><label class="fl">Language</label><input type="text" id="npL" class="input" value="en" placeholder="en"></div>
+      </div>
+      <div class="fg"><label class="fl">Purpose</label><textarea id="npPu" class="input" placeholder="What is this site for? Who is the audience?"></textarea></div>
+      <div class="fg"><label class="fl">Pages</label><input type="text" id="npPg" class="input" placeholder="Home, About, Services, Contact"><div class="fh">Comma-separated</div></div>
+      <div class="fg"><label class="fl">Design Direction</label><textarea id="npDe" class="input" placeholder="Dark and moody? Clean and minimal? Describe the vibe."></textarea></div>
+      <div class="fg"><label class="fl">Template Repo (optional)</label><input type="text" id="npT" class="input" placeholder="owner/repo — copy patterns from this project"></div>
+      <div class="fg"><label class="fl">Notes</label><textarea id="npNo" class="input" placeholder="Anything else the AI should know..."></textarea></div>
+      <div class="ma">
+        <button class="btn btn-g" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-p" id="cpBtn" onclick="initProject()">Initialize</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
