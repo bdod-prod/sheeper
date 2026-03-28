@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "SHEEPER Cloudflare Pages app and Pages Functions.",
+  "type": "module",
   "scripts": {
     "cf:whoami": "npx --yes wrangler@4.78.0 whoami",
     "dev": "npx --yes wrangler@4.78.0 pages dev .",

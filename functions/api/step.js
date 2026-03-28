@@ -113,7 +113,8 @@ export async function onRequestPost(context) {
 
     const { text: aiResponse, provider } = await callAI(env, prompt.messages, {
       system: prompt.system,
-      maxTokens: 16000
+      maxTokens: 16000,
+      task: 'step'
     });
 
     let result;

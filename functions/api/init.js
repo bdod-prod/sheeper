@@ -93,7 +93,8 @@ export async function onRequestPost(context) {
     const planPrompt = buildPlanPrompt(briefJson, templateContextStr);
     const { text: planText, provider } = await callAI(env, planPrompt.messages, {
       system: planPrompt.system,
-      maxTokens: 4000
+      maxTokens: 4000,
+      task: 'plan'
     });
 
     let plan;

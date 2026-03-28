@@ -4,6 +4,13 @@
 const GITHUB_API = 'https://api.github.com';
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
+const XAI_API = 'https://api.x.ai/v1/chat/completions';
+const AUTO_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
+const DEFAULT_AI_MODELS = {
+  claude: 'claude-sonnet-4-20250514',
+  openai: 'gpt-4o',
+  grok: 'grok-4-1-fast-reasoning'
+};
 
 // === AUTH ===
 
@@ -32,35 +39,112 @@ export function errorResponse(message, status = 500) {
   return jsonResponse({ error: message }, status);
 }
 
-// === AI CALLS (Claude primary, OpenAI fallback) ===
+// === AI CALLS (configurable provider routing) ===
 
-export async function callAI(env, messages, { maxTokens = 16000, system = null } = {}) {
-  // Try Claude first
-  if (env.CLAUDE_API_KEY) {
+export async function callAI(env, messages, {
+  maxTokens = 16000,
+  system = null,
+  task = 'default'
+} = {}) {
+  const preferredProvider = resolveProviderPreference(env, task);
+
+  if (preferredProvider !== 'auto') {
+    return callSpecificProvider(env, preferredProvider, messages, { maxTokens, system, task });
+  }
+
+  const errors = [];
+
+  for (const provider of AUTO_PROVIDER_ORDER) {
+    if (!hasProviderCredentials(env, provider)) {
+      continue;
+    }
+
     try {
-      const result = await callClaude(env.CLAUDE_API_KEY, messages, { maxTokens, system });
-      return { text: result, provider: 'claude' };
+      return await callSpecificProvider(env, provider, messages, { maxTokens, system, task });
     } catch (err) {
-      console.error('Claude failed, trying OpenAI fallback:', err.message);
+      errors.push(`${provider}: ${err.message}`);
+      console.error(`${provider} failed during ${task}, trying next provider:`, err.message);
     }
   }
 
-  // Fallback to OpenAI
-  if (env.OPENAI_API_KEY) {
-    try {
-      const result = await callOpenAI(env.OPENAI_API_KEY, messages, { maxTokens, system });
-      return { text: result, provider: 'openai' };
-    } catch (err) {
-      throw new Error(`Both AI providers failed. Last error: ${err.message}`);
-    }
+  if (!errors.length) {
+    throw new Error('No AI API keys configured. Set CLAUDE_API_KEY, OPENAI_API_KEY, and/or XAI_API_KEY.');
   }
 
-  throw new Error('No AI API keys configured. Set CLAUDE_API_KEY and/or OPENAI_API_KEY.');
+  throw new Error(`All AI providers failed for ${task}. ${errors.join(' | ')}`);
 }
 
-async function callClaude(apiKey, messages, { maxTokens, system }) {
+function resolveProviderPreference(env, task) {
+  const taskKey = task && task !== 'default'
+    ? `AI_PROVIDER_${task.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`
+    : null;
+
+  const configured = (taskKey && env[taskKey]) || env.AI_PROVIDER || 'auto';
+  const normalized = normalizeProvider(configured);
+
+  if (!normalized) {
+    throw new Error(`Unsupported AI provider "${configured}". Use auto, claude, openai, or grok.`);
+  }
+
+  return normalized;
+}
+
+function normalizeProvider(value) {
+  const normalized = String(value || 'auto').trim().toLowerCase();
+
+  if (normalized === 'auto') return 'auto';
+  if (normalized === 'claude' || normalized === 'anthropic') return 'claude';
+  if (normalized === 'openai' || normalized === 'gpt') return 'openai';
+  if (normalized === 'grok' || normalized === 'xai') return 'grok';
+
+  return null;
+}
+
+function hasProviderCredentials(env, provider) {
+  if (provider === 'claude') return Boolean(env.CLAUDE_API_KEY);
+  if (provider === 'openai') return Boolean(env.OPENAI_API_KEY);
+  if (provider === 'grok') return Boolean(env.XAI_API_KEY);
+  return false;
+}
+
+async function callSpecificProvider(env, provider, messages, { maxTokens, system, task }) {
+  if (!hasProviderCredentials(env, provider)) {
+    throw new Error(`${provider} selected for ${task}, but its API key is not configured.`);
+  }
+
+  const model = resolveModel(env, provider);
+  let text;
+
+  if (provider === 'claude') {
+    text = await callClaude(env.CLAUDE_API_KEY, model, messages, { maxTokens, system });
+  } else if (provider === 'openai') {
+    text = await callOpenAICompatible(OPENAI_API, env.OPENAI_API_KEY, model, messages, { maxTokens, system });
+  } else if (provider === 'grok') {
+    text = await callOpenAICompatible(XAI_API, env.XAI_API_KEY, model, messages, { maxTokens, system });
+  } else {
+    throw new Error(`Unsupported AI provider "${provider}".`);
+  }
+
+  return { text, provider, model };
+}
+
+function resolveModel(env, provider) {
+  if (provider === 'claude') {
+    return env.CLAUDE_MODEL || DEFAULT_AI_MODELS.claude;
+  }
+  if (provider === 'openai') {
+    return env.OPENAI_MODEL || DEFAULT_AI_MODELS.openai;
+  }
+  if (provider === 'grok') {
+    return env.XAI_MODEL || DEFAULT_AI_MODELS.grok;
+  }
+
+  throw new Error(`Unsupported AI provider "${provider}".`);
+}
+
+async function callClaude(apiKey, model, messages, { maxTokens, system }) {
   const body = {
-    model: 'claude-sonnet-4-20250514',
+    model,
     max_tokens: maxTokens,
     messages
   };
@@ -84,37 +168,87 @@ async function callClaude(apiKey, messages, { maxTokens, system }) {
   }
 
   const data = await res.json();
-  return data.content.map(c => c.text || '').join('');
+  return extractClaudeText(data.content);
 }
 
-async function callOpenAI(apiKey, messages, { maxTokens, system }) {
-  // Convert to OpenAI format: add system message at front
-  const openaiMessages = [];
-  if (system) {
-    openaiMessages.push({ role: 'system', content: system });
-  }
-  openaiMessages.push(...messages);
-
-  const res = await fetch(OPENAI_API, {
+async function callOpenAICompatible(endpoint, apiKey, model, messages, { maxTokens, system }) {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4o',
+      model,
       max_tokens: maxTokens,
-      messages: openaiMessages
+      messages: toOpenAICompatibleMessages(messages, system)
     })
   });
 
   if (!res.ok) {
     const errBody = await res.text();
-    throw new Error(`OpenAI API ${res.status}: ${errBody.substring(0, 300)}`);
+    throw new Error(`${endpoint} ${res.status}: ${errBody.substring(0, 300)}`);
   }
 
   const data = await res.json();
-  return data.choices[0].message.content;
+  return extractChatCompletionText(data);
+}
+
+function toOpenAICompatibleMessages(messages, system) {
+  const openaiMessages = [];
+
+  if (system) {
+    openaiMessages.push({ role: 'system', content: system });
+  }
+
+  openaiMessages.push(...messages);
+  return openaiMessages;
+}
+
+function extractClaudeText(contentBlocks) {
+  return (contentBlocks || [])
+    .map(block => extractMessageText(block?.text ?? block))
+    .filter(Boolean)
+    .join('');
+}
+
+function extractChatCompletionText(data) {
+  const message = data?.choices?.[0]?.message;
+  const text = extractMessageText(message?.content);
+
+  if (!text) {
+    throw new Error('AI provider returned an empty completion.');
+  }
+
+  return text;
+}
+
+function extractMessageText(content) {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map(part => {
+        if (typeof part === 'string') return part;
+        if (typeof part?.text === 'string') return part.text;
+        if (typeof part?.content === 'string') return part.content;
+        if (typeof part?.value === 'string') return part.value;
+        if (typeof part?.text?.value === 'string') return part.text.value;
+        return '';
+      })
+      .join('');
+  }
+
+  if (content && typeof content === 'object') {
+    if (typeof content.text === 'string') return content.text;
+    if (typeof content.content === 'string') return content.content;
+    if (typeof content.value === 'string') return content.value;
+    if (typeof content.text?.value === 'string') return content.text.value;
+  }
+
+  return '';
 }
 
 // === JSON EXTRACTION ===

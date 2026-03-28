@@ -64,7 +64,7 @@ ${Object.entries(contextContents).map(([p, c]) => `--- ${p} ---\n${c}`).join('\n
 
 Respond ONLY with JSON: { "files_to_read": ["path/file.html"], "reasoning": "why" }
 Select MINIMUM files (1-5).`
-    }], { maxTokens: 2000 });
+    }], { maxTokens: 2000, task: 'edit_select' });
 
     let filesToRead = [];
     try { filesToRead = extractJson(planText).files_to_read || []; } catch {}
@@ -106,7 +106,7 @@ Response (JSON only, no backticks):
   "summary": "What was changed",
   "files": [{ "path": "file.html", "action": "modified", "content": "full content" }]
 }`
-    }], { maxTokens: 16000 });
+    }], { maxTokens: 16000, task: 'edit' });
 
     const changes = extractJson(changeText);
     if (!changes.files?.length) throw new Error('AI generated no changes. Be more specific.');
