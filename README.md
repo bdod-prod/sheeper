@@ -20,6 +20,8 @@ sheeper_cloudflare_pages_repo/
 |     |- edit.js
 |     |- approve.js
 |     `- reject.js
+|- package.json
+|- wrangler.toml
 |- .dev.vars.example
 `- .gitignore
 ```
@@ -55,7 +57,9 @@ This layout targets **Cloudflare Pages + Pages Functions**:
 - Original flat export preserved separately
 - Local git repo initialized on `main`
 - Local commits created and pushed
-- Deployment still needs a real environment validation pass with credentials
+- Cloudflare Pages project `sheeper` created
+- Local Cloudflare Pages dev smoke test passed for `/` and `/api/auth`
+- Deployment still needs real project secrets before the hosted app can work end-to-end
 - GitHub remote configured as `origin`
 - Published to public GitHub repo `bdod-prod/sheeper`
 
@@ -72,8 +76,45 @@ Branch status:
 - local `main` tracks `origin/main`
 - current published branch: `main`
 
+## Cloudflare status
+
+- Pages project: `sheeper`
+- Default URL: `https://sheeper.pages.dev`
+- Git integration: not connected yet
+- Pages secrets configured: none yet
+- Deployments created: none yet
+
+## Local development
+
+Repo-local Cloudflare workflow files:
+
+- `wrangler.toml`
+- `package.json`
+- `.dev.vars.example`
+
+Recommended commands:
+
+```bash
+npm run dev
+```
+
+On Windows PowerShell with script execution restricted, use:
+
+```bash
+npm.cmd run dev
+```
+
+For a fixed port:
+
+```bash
+npm.cmd run dev:8788
+```
+
+Local secrets belong in `.dev.vars` and should match `.dev.vars.example`.
+
 ## Next engineering tasks
 
-1. Run a real local/dev deploy check with configured env vars.
-2. Confirm preview URL behavior against actual Cloudflare Pages project naming.
-3. Add guardrails for large repos and oversized AI/file responses.
+1. Add real Pages secrets: `SHEEPER_TOKEN`, `GITHUB_TOKEN`, `CLAUDE_API_KEY`, and optional `OPENAI_API_KEY`.
+2. Create the first deployment to `sheeper.pages.dev` once secrets exist.
+3. Decide whether to keep Wrangler-based deploys or connect GitHub for dashboard-driven branch previews.
+4. Add guardrails for large repos and oversized AI/file responses.

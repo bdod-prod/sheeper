@@ -1,0 +1,25 @@
+{
+  "name": "sheeper",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SHEEPER Cloudflare Pages app and Pages Functions.",
+  "scripts": {
+    "cf:whoami": "npx --yes wrangler@4.78.0 whoami",
+    "dev": "npx --yes wrangler@4.78.0 pages dev .",
+    "dev:8788": "npx --yes wrangler@4.78.0 pages dev . --port 8788",
+    "deploy": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper",
+    "deploy:main": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper --branch main"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bdod-prod/sheeper.git"
+  },
+  "packageManager": "npm@11.9.0",
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/bdod-prod/sheeper/issues"
+  },
+  "homepage": "https://github.com/bdod-prod/sheeper#readme"
+}
