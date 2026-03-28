@@ -128,6 +128,7 @@ Repo-local Cloudflare workflow files:
 - `wrangler.toml`
 - `package.json`
 - `.dev.vars.example`
+- `scripts/push-pages-secrets.mjs`
 
 Recommended commands:
 
@@ -148,6 +149,18 @@ npm.cmd run dev:8788
 ```
 
 Local secrets belong in `.dev.vars` and should match `.dev.vars.example`.
+
+To upload non-empty secrets from local `.dev.vars` to Cloudflare Pages:
+
+```bash
+npm.cmd run secrets:push
+```
+
+To upload only selected keys:
+
+```bash
+npm.cmd run secrets:push -- --only GITHUB_TOKEN,OPENAI_API_KEY
+```
 
 ## Next engineering tasks
 
