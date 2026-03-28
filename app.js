@@ -1,7 +1,7 @@
 // === SHEEPER APP ===
 
 let authToken = '';
-let projects = JSON.parse(localStorage.getItem('sheeper_projects') || '[]');
+let projects = loadProjects();
 let proj = null; // current project
 let mode = 'build';
 let uploads = [];
@@ -60,13 +60,40 @@ async function api(path, data) {
     },
     body: JSON.stringify(data)
   });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  const raw = await r.text();
+  let j = null;
+
+  if (raw) {
+    try {
+      j = JSON.parse(raw);
+    } catch {
+      j = null;
+    }
+  }
+
+  if (!r.ok) {
+    const detail = j?.error || j?.message || raw.trim();
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
+
+  if (!j) {
+    throw new Error(`Unexpected empty response from ${path}`);
+  }
+
   return j;
 }
 
 // === PROJECTS ===
 function saveP() { localStorage.setItem('sheeper_projects', JSON.stringify(projects)); }
+
+function loadProjects() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('sheeper_projects') || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function renderProjects() {
   const c = document.getElementById('pList');
@@ -75,19 +102,27 @@ function renderProjects() {
     return;
   }
   c.innerHTML = projects.map((p, i) => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;background:var(--bg-card);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;margin-bottom:0.5rem;transition:all 0.15s" onclick="openProj(${i})" onmouseover="this.style.borderColor='var(--bdr-a)'" onmouseout="this.style.borderColor='var(--bdr)'">
+    <div class="pc">
       <div>
         <div style="font-size:0.9375rem;font-weight:600;color:var(--bright)">${esc(p.name)}</div>
-        <div class="mono" style="font-size:0.6875rem;color:var(--dim)">${esc(p.owner)}/${esc(p.repo)} ${p.branch ? '→ ' + esc(p.branch) : ''}</div>
+        <div class="mono" style="font-size:0.6875rem;color:var(--dim);word-break:break-all">${esc(p.owner)}/${esc(p.repo)} ${p.branch ? '-> ' + esc(p.branch) : ''}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:0.75rem">
+      <div class="pc-a">
         <span class="mono" style="font-size:0.6875rem;padding:0.25rem 0.625rem;border-radius:3px;border:1px solid ${p.deployed ? 'var(--acc-m)' : p.branch ? 'rgba(255,204,0,0.2)' : 'var(--bdr)'};color:${p.deployed ? 'var(--acc)' : p.branch ? 'var(--warn)' : 'var(--dim)'};background:${p.deployed ? 'var(--acc-d)' : p.branch ? 'rgba(255,204,0,0.05)' : 'transparent'}">${p.deployed ? 'DEPLOYED' : p.branch ? 'BUILDING' : 'NEW'}</span>
-        <button class="btn btn-g btn-s" onclick="event.stopPropagation();rmProj(${i})" title="Remove">×</button>
+        <button type="button" class="btn btn-p btn-s" data-open-project-index="${i}">Open</button>
+        <button type="button" class="btn btn-g btn-s" data-remove-project-index="${i}" aria-label="Remove ${esc(p.name)} from the dashboard" title="Remove">&times;</button>
       </div>
     </div>
   `).join('');
-}
 
+  c.querySelectorAll('[data-open-project-index]').forEach((btn) => {
+    btn.addEventListener('click', () => openProj(Number(btn.dataset.openProjectIndex)));
+  });
+
+  c.querySelectorAll('[data-remove-project-index]').forEach((btn) => {
+    btn.addEventListener('click', () => rmProj(Number(btn.dataset.removeProjectIndex)));
+  });
+}
 function rmProj(i) {
   if (!confirm('Remove from list? (Repo/branch untouched.)')) return;
   projects.splice(i, 1);
@@ -198,7 +233,7 @@ function renderSteps() {
     const isCur = i === cur;
     const cls = done ? 'done' : isCur ? 'cur' : 'pen';
     return `
-      <div class="si ${cls} ${done ? 'click' : ''}">
+      <div class="si ${cls}">
         <div class="sm">${done ? '✓' : i + 1}</div>
         <div>
           <div class="sn">${esc(s.name)}</div>
@@ -233,9 +268,9 @@ function renderWork() {
     const previewUrl = `https://${cfB}.${proj.repo}.pages.dev`;
     c.innerHTML = `
       <div style="text-align:center;padding:3rem 2rem">
-        <div style="font-size:1.5rem;font-weight:700;color:var(--acc);margin-bottom:0.5rem">Build Complete 🐑</div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--acc);margin-bottom:0.5rem">Build Complete</div>
         <div class="mono" style="font-size:0.8125rem;color:var(--dim);margin-bottom:2rem">All ${total} steps finished. Ready to deploy.</div>
-        <a href="${previewUrl}" target="_blank" class="pl" style="margin-bottom:1rem;display:inline-flex">↗ Preview: ${previewUrl}</a>
+        ${renderPreviewMarkup(previewUrl)}
         <div style="margin-top:2rem;display:flex;gap:0.75rem;justify-content:center">
           <button class="btn btn-a" onclick="doApprove()">✓ Deploy to Production</button>
           <button class="btn btn-d" onclick="doReject()">✕ Discard Build</button>
@@ -272,7 +307,7 @@ function renderWork() {
     <div id="proc" style="display:none">
       <div class="ob">
         <div class="ot">Processing</div>
-        <div id="procLines"></div>
+        <div id="procLines" aria-live="polite"></div>
       </div>
     </div>
 
@@ -286,7 +321,7 @@ function renderWork() {
       <div style="display:flex;gap:0.75rem;margin-top:1rem" id="resActions"></div>
     </div>
 
-    <div id="errBox" class="eb"></div>
+    <div id="errBox" class="eb" role="alert" aria-live="assertive"></div>
   `;
 
   setupDropZone();
@@ -317,7 +352,7 @@ function renderEditMode(c) {
     </div>
 
     <div id="proc" style="display:none">
-      <div class="ob"><div class="ot">Processing</div><div id="procLines"></div></div>
+      <div class="ob"><div class="ot">Processing</div><div id="procLines" aria-live="polite"></div></div>
     </div>
 
     <div id="result" style="display:none">
@@ -330,7 +365,7 @@ function renderEditMode(c) {
       <div style="display:flex;gap:0.75rem;margin-top:1rem" id="resActions"></div>
     </div>
 
-    <div id="errBox" class="eb"></div>
+    <div id="errBox" class="eb" role="alert" aria-live="assertive"></div>
   `;
 
   setupDropZone();
@@ -356,17 +391,21 @@ function addFiles(fileList) {
   renderFiles();
 }
 
-function rmFile(name) {
-  uploads = uploads.filter(f => f.name !== name);
+function rmFileAt(index) {
+  uploads.splice(index, 1);
   renderFiles();
 }
 
 function renderFiles() {
   const c = document.getElementById('fList');
   if (!c) return;
-  c.innerHTML = uploads.map(f => `
-    <div class="fci">${esc(f.name)} <button onclick="rmFile('${esc(f.name)}')">&times;</button></div>
+  c.innerHTML = uploads.map((f, i) => `
+    <div class="fci"><span>${esc(f.name)}</span> <button type="button" data-upload-index="${i}" aria-label="Remove ${esc(f.name)}">&times;</button></div>
   `).join('');
+
+  c.querySelectorAll('[data-upload-index]').forEach((btn) => {
+    btn.addEventListener('click', () => rmFileAt(Number(btn.dataset.uploadIndex)));
+  });
 }
 
 function toB64(file) {
@@ -443,9 +482,7 @@ async function runStep() {
       <div class="of"><span class="a ${f.action === 'created' ? 'cr' : 'md'}">${f.action}</span><span>${esc(f.path)}</span></div>
     `).join('');
 
-    document.getElementById('resPreview').innerHTML = res.previewUrl
-      ? `<a href="${res.previewUrl}" target="_blank" class="pl">↗ Preview: ${res.previewUrl}</a>`
-      : '';
+    document.getElementById('resPreview').innerHTML = renderPreviewMarkup(res.previewUrl);
 
     if (res.isLastStep) {
       document.getElementById('resActions').innerHTML = `
@@ -522,9 +559,7 @@ async function runEdit() {
       <div class="of"><span class="a ${f.action === 'created' ? 'cr' : 'md'}">${f.action}</span><span>${esc(f.path)}</span></div>
     `).join('');
 
-    document.getElementById('resPreview').innerHTML = res.previewUrl
-      ? `<a href="${res.previewUrl}" target="_blank" class="pl">↗ Preview: ${res.previewUrl}</a>`
-      : '';
+    document.getElementById('resPreview').innerHTML = renderPreviewMarkup(res.previewUrl);
 
     // Store edit branch for approve/reject
     proj._editBranch = res.branch;
@@ -623,6 +658,24 @@ function log(msg, cls = '') {
 
 // === UTILS ===
 function esc(s) {
-  if (!s) return '';
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (s === undefined || s === null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderPreviewMarkup(previewUrl) {
+  if (!previewUrl) return '';
+
+  return `
+    <div style="margin-top:1rem;padding:0.875rem;border:1px solid var(--bdr);border-radius:4px;background:var(--bg-card);text-align:left">
+      <div class="mono" style="font-size:0.625rem;font-weight:600;color:var(--dim);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem">Expected Preview URL</div>
+      <div class="mono" style="font-size:0.75rem;color:var(--bright);word-break:break-all">${esc(previewUrl)}</div>
+      <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--dim);line-height:1.5">This URL is predicted. It only works if the target repo is already wired to Cloudflare Pages branch previews.</div>
+      <a href="${esc(previewUrl)}" target="_blank" rel="noopener noreferrer" class="pl" style="margin-top:0.75rem">Open Expected Preview</a>
+    </div>
+  `;
 }
