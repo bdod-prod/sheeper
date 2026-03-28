@@ -54,19 +54,23 @@ This layout targets **Cloudflare Pages + Pages Functions**:
 - Layout normalized
 - Original flat export preserved separately
 - Local git repo initialized on `main`
-- Initial local commit created
+- Local commits created and pushed
 - Deployment still needs a real environment validation pass with credentials
-- No GitHub remote configured yet
+- GitHub remote configured as `origin`
+- Published to public GitHub repo `bdod-prod/sheeper`
 
 ## Publishing status
 
-The repo is ready to connect to a GitHub remote.
+The canonical repo is now published on GitHub.
 
-Recommended remote:
+Remote:
 
 - `bdod-prod/sheeper`
 
-Once that empty repo exists, add `origin` and push `main`.
+Branch status:
+
+- local `main` tracks `origin/main`
+- current published HEAD: `b43ae76`
 
 ## Next engineering tasks
 
