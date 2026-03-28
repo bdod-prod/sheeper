@@ -10,6 +10,6 @@ AI_PROVIDER_STEP=
 AI_PROVIDER_EDIT_SELECT=
 AI_PROVIDER_EDIT=
 
-CLAUDE_MODEL=claude-sonnet-4-20250514
-OPENAI_MODEL=gpt-4o
-XAI_MODEL=grok-4-1-fast-reasoning
+CLAUDE_MODEL=claude-opus-4-6
+OPENAI_MODEL=gpt-5.4
+XAI_MODEL=grok-4.20-beta-latest-non-reasoning
