@@ -54,8 +54,19 @@ This layout targets **Cloudflare Pages + Pages Functions**:
 - Layout normalized
 - Original flat export preserved separately
 - Local git repo initialized on `main`
-- No commit yet because git identity is not configured on this machine
+- Initial local commit created
 - Deployment still needs a real environment validation pass with credentials
+- No GitHub remote configured yet
+
+## Publishing status
+
+The repo is ready to connect to a GitHub remote.
+
+Recommended remote:
+
+- `bdod-prod/sheeper`
+
+Once that empty repo exists, add `origin` and push `main`.
 
 ## Next engineering tasks
 
