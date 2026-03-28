@@ -70,7 +70,7 @@ Remote:
 Branch status:
 
 - local `main` tracks `origin/main`
-- current published HEAD: `b43ae76`
+- current published branch: `main`
 
 ## Next engineering tasks
 
