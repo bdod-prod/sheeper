@@ -88,6 +88,27 @@ async function bootstrapAuth() {
   }
 }
 
+async function logout() {
+  try {
+    await fetch('/api/auth', {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
+  } catch {}
+
+  authToken = '';
+  proj = null;
+  mode = 'build';
+  clearLog();
+  setAuthError('');
+  show('authV');
+  const tokenInput = byId('tokIn');
+  if (tokenInput) {
+    tokenInput.value = '';
+    tokenInput.focus();
+  }
+}
+
 function bindStarterInputs() {
   ['starterDomain', 'starterLanguage', 'starterTemplateRepo'].forEach((id) => {
     const element = byId(id);
@@ -997,6 +1018,7 @@ function renderWork() {
   const currentStep = proj.log?.currentStep || 0;
   const totalSteps = proj.plan.steps.length;
   const previewPanel = isPreviewProject(proj) ? renderLivePreviewPanel(proj) : '';
+  const currentStepFailure = getCurrentStepFailure(proj, currentStep);
 
   if (currentStep >= totalSteps) {
     if (isPreviewProject(proj)) {
@@ -1043,6 +1065,14 @@ function renderWork() {
       <textarea id="guidance" class="input" placeholder="Any specific instruction for this step..."></textarea>
     </div>
 
+    ${currentStepFailure ? `
+      <div class="ob" style="border-color:rgba(255,77,79,0.22);background:rgba(255,77,79,0.06);">
+        <div class="ot" style="color:var(--red);">Step Needs Retry</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--bright);margin-bottom:0.35rem;">The last attempt on this step failed.</div>
+        <div class="helper-copy">Adjust the guidance or files if you want, then retry the same step. Latest error: ${esc(currentStepFailure.message)}</div>
+      </div>
+    ` : ''}
+
     <div>
       <div class="dz" id="dz">
         <div class="mono" style="font-size:0.75rem;color:var(--dim);">Drop files here or <strong style="color:var(--acc);">browse</strong></div>
@@ -1052,7 +1082,7 @@ function renderWork() {
     </div>
 
     <div style="display:flex;gap:0.75rem;align-items:center;">
-      <button type="button" class="btn btn-p" id="runBtn" onclick="runStep()">Execute Step</button>
+      <button type="button" class="btn btn-p" id="runBtn" onclick="runStep()">${currentStepFailure ? 'Retry Step' : 'Execute Step'}</button>
     </div>
 
     <div id="proc" style="display:none;"><div class="ob"><div class="ot">Processing</div><div id="procLines" aria-live="polite"></div></div></div>
@@ -1544,6 +1574,20 @@ function renderPersistedLog() {
   if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
 }
 
+function getCurrentStepFailure(project, stepIndex) {
+  const events = Array.isArray(project?.log?.events) ? project.log.events : [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === 'step.completed' && Number(event?.data?.stepIndex) === Number(stepIndex)) {
+      return null;
+    }
+    if (event?.type === 'step.failed' && Number(event?.data?.stepIndex) === Number(stepIndex)) {
+      return event;
+    }
+  }
+  return null;
+}
+
 function log(message, state = '') {
   const container = byId('logE');
   if (!container) return;
@@ -1637,6 +1681,7 @@ window.reopenBriefConversation = reopenBriefConversation;
 window.buildStarterProject = buildStarterProject;
 window.setMode = setMode;
 window.toDash = toDash;
+window.logout = logout;
 window.renderWork = renderWork;
 window.runStep = runStep;
 window.runEdit = runEdit;

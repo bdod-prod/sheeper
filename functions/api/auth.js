@@ -1,6 +1,7 @@
 import {
   authCookieHeader,
   checkAuth,
+  clearAuthCookieHeader,
   errorResponse,
   jsonResponse
 } from './_shared.js';
@@ -31,4 +32,11 @@ export async function onRequestGet(context) {
   }
 
   return jsonResponse({ ok: true });
+}
+
+export async function onRequestDelete(context) {
+  const { request } = context;
+  return jsonResponse({ ok: true }, 200, {
+    'Set-Cookie': clearAuthCookieHeader(request.url)
+  });
 }

@@ -120,6 +120,8 @@ export async function onRequestPost(context) {
       ...buildAiJsonEvents(generation.diagnostics, 'step'),
       createLogEvent('step.completed', `Completed ${currentStep.name}.`, {
         data: {
+          stepId: currentStep.id,
+          stepIndex: targetStep,
           provider: generation.provider,
           model: generation.model,
           files: generation.files.map((file) => file.path),

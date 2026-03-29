@@ -653,7 +653,10 @@
       <div class="hdr-l">
         <div class="hdr-b">SHEEPER</div>
       </div>
-      <div class="status-chip"><span class="dot"></span>Internal Alpha</div>
+      <div style="display:flex;align-items:center;gap:1rem;">
+        <div class="status-chip"><span class="dot"></span>Internal Alpha</div>
+        <button type="button" class="btn btn-g btn-s" onclick="logout()">Log Out</button>
+      </div>
     </div>
 
     <div class="dash-shell">
@@ -760,6 +763,7 @@
       <div style="display:flex;align-items:center;gap:1rem;">
         <div class="status-chip"><span class="dot"></span><span id="hName">Current Project</span></div>
         <button type="button" class="btn btn-g btn-s" onclick="toDash()">Back to Projects</button>
+        <button type="button" class="btn btn-g btn-s" onclick="logout()">Log Out</button>
       </div>
     </div>
 
