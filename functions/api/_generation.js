@@ -44,10 +44,12 @@ export async function runStepGeneration(env, {
     provider,
     model
   };
-  const result = await extractJsonWithRepair(env, text, {
-    label: `build step "${currentStep.name}"`,
-    captureMeta: stepJsonMeta,
-    schemaHint: `{
+  let result;
+  try {
+    result = await extractJsonWithRepair(env, text, {
+      label: `build step "${currentStep.name}"`,
+      captureMeta: stepJsonMeta,
+      schemaHint: `{
   "summary": "what was built",
   "files": [
     {
@@ -58,7 +60,13 @@ export async function runStepGeneration(env, {
   ],
   "notes": "optional notes"
 }`
-  });
+    });
+  } catch (error) {
+    error.sheeperDiagnostics = {
+      stepJson: stepJsonMeta
+    };
+    throw error;
+  }
   if (!result.files || !result.files.length) {
     throw new Error('AI generated no files. Try adding more guidance.');
   }
@@ -135,10 +143,12 @@ export async function runEditGeneration(env, {
     provider,
     model
   };
-  const changes = await extractJsonWithRepair(env, changeText, {
-    label: 'edit response',
-    captureMeta: editJsonMeta,
-    schemaHint: `{
+  let changes;
+  try {
+    changes = await extractJsonWithRepair(env, changeText, {
+      label: 'edit response',
+      captureMeta: editJsonMeta,
+      schemaHint: `{
   "summary": "what changed",
   "files": [
     {
@@ -147,8 +157,15 @@ export async function runEditGeneration(env, {
       "content": "full file content"
     }
   ]
-}`
-  });
+  }`
+    });
+  } catch (error) {
+    error.sheeperDiagnostics = {
+      editSelectJson: editSelectJsonMeta,
+      editJson: editJsonMeta
+    };
+    throw error;
+  }
   if (!changes.files?.length) {
     throw new Error('AI generated no changes. Be more specific.');
   }

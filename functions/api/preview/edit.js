@@ -180,7 +180,8 @@ function buildAiJsonEvents(diagnostics = {}, taskLabel = 'task') {
           ? 'json parse failed'
           : 'json clean';
       const level = status === 'failed' ? 'error' : status === 'repaired' ? 'warn' : 'info';
-      return createLogEvent('ai.task', `AI ${taskLabel}/${key} via ${meta.provider} (${outcome}).`, {
+      const modelLabel = meta.model ? `/${meta.model}` : '';
+      return createLogEvent('ai.task', `AI ${taskLabel}/${key} via ${meta.provider}${modelLabel} (${outcome}).`, {
         level,
         data: meta
       });

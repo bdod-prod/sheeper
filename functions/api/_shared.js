@@ -405,6 +405,7 @@ ${text}`;
       if (captureMeta) {
         captureMeta.parseStatus = 'failed';
         captureMeta.repairError = repairError.message;
+        initialError.sheeperMeta = { ...captureMeta };
       }
       throw initialError;
     }

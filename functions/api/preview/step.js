@@ -168,23 +168,27 @@ export async function onRequestPost(context) {
       'Set-Cookie': previewCookieHeader(request.url, updatedSession.sessionId, updatedSession.previewSecret)
     });
   } catch (err) {
+    const failureDiagnostics = err?.sheeperDiagnostics || (err?.sheeperMeta ? { stepJson: err.sheeperMeta } : {});
     emitRuntimeLog('preview.step.failed', {
       sessionId: session?.sessionId,
       stepId: currentStep?.id,
       stepName: currentStep?.name,
       stepIndex: targetStep,
-      error: err.message
+      error: err.message,
+      parseDiagnostics: failureDiagnostics
     }, 'error');
     if (session?.sessionId) {
       try {
         const failedLog = appendLogEvents(startedLog || session.log || {}, [
+          ...buildAiJsonEvents(failureDiagnostics, 'step'),
           createLogEvent('step.failed', `Step failed${currentStep?.name ? `: ${currentStep.name}` : ''}.`, {
             level: 'error',
             data: {
               stepId: currentStep?.id,
               stepName: currentStep?.name,
               stepIndex: targetStep,
-              error: err.message
+              error: err.message,
+              diagnostics: failureDiagnostics
             }
           })
         ]);
@@ -211,7 +215,8 @@ function buildAiJsonEvents(diagnostics = {}, taskLabel = 'task') {
           ? 'json parse failed'
           : 'json clean';
       const level = status === 'failed' ? 'error' : status === 'repaired' ? 'warn' : 'info';
-      return createLogEvent('ai.task', `AI ${taskLabel}/${key} via ${meta.provider} (${outcome}).`, {
+      const modelLabel = meta.model ? `/${meta.model}` : '';
+      return createLogEvent('ai.task', `AI ${taskLabel}/${key} via ${meta.provider}${modelLabel} (${outcome}).`, {
         level,
         data: meta
       });

@@ -1297,7 +1297,11 @@ async function runStep() {
   } catch (error) {
     showErrorBox(errBox, error.message);
     addLine(error.message, 'er');
-    if (isPreviewProject(proj)) await refreshPreviewProjectState();
+    if (isPreviewProject(proj)) {
+      await refreshPreviewProjectState();
+      renderSteps();
+      renderWork();
+    }
     log(`Error: ${error.message}`, 'er');
   } finally {
     busy = false;
@@ -1372,7 +1376,10 @@ async function runEdit() {
       : '<button type="button" class="btn btn-a" onclick="doApproveEdit()">Approve Edit</button><button type="button" class="btn btn-d" onclick="doRejectEdit()">Reject Edit</button>';
   } catch (error) {
     showErrorBox(errBox, error.message);
-    if (isPreviewProject(proj)) await refreshPreviewProjectState();
+    if (isPreviewProject(proj)) {
+      await refreshPreviewProjectState();
+      renderWork();
+    }
     log(`Edit error: ${error.message}`, 'er');
   } finally {
     busy = false;
