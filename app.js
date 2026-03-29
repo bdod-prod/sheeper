@@ -1,6 +1,28 @@
 const PROJECTS_KEY = 'sheeper_projects';
 const STARTER_DRAFT_KEY = 'sheeper_starter_draft';
 const MAX_INTAKE_TURNS = 5;
+const STARTER_EXAMPLES = [
+  {
+    label: 'Portfolio, tonight',
+    prompt: 'Build a one-page portfolio for a multidisciplinary creative. Dark theme, single-scroll layout, work samples in a tight grid, short about section, and a hire-me contact CTA at the bottom. Keep it fast, sharp, and free of decorative fluff.'
+  },
+  {
+    label: 'Freelance studio',
+    prompt: 'Create a premium one-page site for a freelance product engineering studio. Confident tone, minimal typography, sections for hero, services, selected work, process, and contact. Make it feel serious, modern, and ready to send to clients tonight.'
+  },
+  {
+    label: 'Product launch',
+    prompt: 'Build a focused landing page for a new SaaS launch. Strong hero, product benefits, feature breakdown, social proof, pricing teaser, and waitlist CTA. Clean, fast, and conversion-first without looking generic.'
+  },
+  {
+    label: 'Side hustle page',
+    prompt: 'Make a one-page site for a side hustle that sells a digital product. Warm but direct tone, simple structure, sections for problem, offer, what is included, FAQ, and buy CTA. It should feel trustworthy and launch-ready in one pass.'
+  },
+  {
+    label: 'Surprise me',
+    prompt: 'Create something unexpected but usable: a one-page website for a niche business with a bold visual direction, strong headline, memorable sections, and a clear CTA. Avoid safe startup cliches and make it feel intentionally designed.'
+  }
+];
 let authToken = '';
 let projects = loadProjects();
 let starterDraft = loadStarterDraft();
@@ -218,6 +240,7 @@ function renderStarter() {
   const thread = byId('starterThread');
   const briefSlot = byId('starterBriefSlot');
   const meta = byId('starterMeta');
+  const examples = byId('starterExamples');
   const sendButton = byId('starterSendBtn');
   const resetButton = byId('starterResetBtn');
   const composer = byId('starterComposer');
@@ -229,6 +252,13 @@ function renderStarter() {
 
   if (briefSlot) {
     briefSlot.innerHTML = starterDraft.compiledBrief && starterDraft.status === 'ready' && !starterDraft.followUpMode ? renderBriefCard(starterDraft.compiledBrief) : '';
+  }
+
+  if (examples) {
+    examples.innerHTML = renderStarterExampleChips();
+    examples.querySelectorAll('[data-starter-example]').forEach((button) => {
+      button.addEventListener('click', () => applyStarterExample(Number(button.dataset.starterExample)));
+    });
   }
 
   if (meta) meta.textContent = starterMetaText();
@@ -268,6 +298,23 @@ function renderStarterEmptyState() {
     </div>
   `;
 }
+
+function renderStarterExampleChips() {
+  return STARTER_EXAMPLES.map((example, index) => `
+    <button type="button" class="starter-chip" data-starter-example="${index}" ${busy ? 'disabled' : ''}>${esc(example.label)}</button>
+  `).join('');
+}
+
+function applyStarterExample(index) {
+  const example = STARTER_EXAMPLES[index];
+  if (!example) return;
+
+  starterDraft.composer = example.prompt;
+  saveStarterDraft();
+  renderStarter();
+  byId('starterComposer')?.focus();
+}
+
 function renderMessageBubble(message) {
   return `
     <div class="bubble ${message.role === 'assistant' ? 'assistant' : 'user'}">
@@ -336,13 +383,13 @@ function starterMetaText() {
   if (starterDraft.history.length) {
     return 'Conversation underway. Keep talking naturally and SHEEPER will decide when the brief is ready.';
   }
-  return 'A detailed first message can skip questions entirely.';
+  return 'Start from a full-brief chip or type your own. A strong opening prompt can skip questions entirely.';
 }
 
 function starterSendButtonLabel() {
   if (busy) return 'Working...';
   if (starterDraft.followUpMode) return 'Refresh Brief';
-  if (!starterDraft.history.length) return 'Generate Brief';
+  if (!starterDraft.history.length) return 'Give Me Your Best Shot';
   return 'Send Reply';
 }
 

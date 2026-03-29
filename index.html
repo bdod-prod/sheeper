@@ -269,6 +269,37 @@
       margin-bottom: 0.3rem;
       text-transform: uppercase;
     }
+    .starter-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 0.85rem;
+    }
+    .starter-chip {
+      padding: 0.48rem 0.72rem;
+      border: 1px solid var(--bdr);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+    }
+    .starter-chip:hover,
+    .starter-chip:focus-visible {
+      border-color: var(--acc-m);
+      background: var(--acc-d);
+      color: var(--acc);
+      outline: none;
+    }
+    .ownership-note {
+      font-size: 0.76rem;
+      color: var(--dim);
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
     .bubble {
       max-width: 88%;
       padding: 0.9rem 1rem;
@@ -657,6 +688,7 @@
             <div>
               <label class="fl" for="starterComposer">Conversation</label>
               <div class="helper-copy">A detailed first message can skip questions entirely. If I do ask something, it will be one strategic question at a time, up to five total.</div>
+              <div id="starterExamples" class="starter-chip-row"></div>
             </div>
             <textarea id="starterComposer" class="input" placeholder="Create a premium one-page site for a boutique AI strategy studio. Dark background, restrained typography, sections for services, process, and contact. Make it feel serious, fast, and modern."></textarea>
             <div class="composer-actions">
@@ -666,6 +698,7 @@
                 <button type="button" class="btn btn-p" id="starterSendBtn" onclick="submitStarterMessage()">Generate Brief</button>
               </div>
             </div>
+            <div class="ownership-note">Your code. Your repo. Your Cloudflare. Free to ship.</div>
           </div>
         </div>
       </section>
