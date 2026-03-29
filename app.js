@@ -3,6 +3,7 @@ const STARTER_DRAFT_KEY = 'sheeper_starter_draft';
 const MAX_INTAKE_TURNS = 5;
 const STARTER_SOURCE_TEXT_LIMIT = 16000;
 const STARTER_SOURCE_FILE_LIMIT = 3;
+const GITHUB_REPO_PAGE_SIZE = 50;
 const STARTER_EXAMPLES = [
   {
     label: 'Portfolio, tonight',
@@ -32,6 +33,9 @@ let proj = null;
 let mode = 'build';
 let uploads = [];
 let busy = false;
+let githubUi = defaultGitHubUi();
+let uiNotice = null;
+let pendingResumeSessionId = null;
 
 initApp();
 
@@ -42,8 +46,12 @@ async function initApp() {
     tokenInput.addEventListener('input', () => setAuthError(''));
   }
   bindStarterInputs();
+  consumeReturnStateFromUrl();
   renderDashboard();
-  await bootstrapAuth();
+  const authenticated = await bootstrapAuth();
+  if (authenticated) {
+    await handlePostAuthNavigation();
+  }
 }
 
 async function handleAuthKeydown(event) {
@@ -63,6 +71,7 @@ async function handleAuthKeydown(event) {
     setAuthError('');
     show('dashV');
     renderDashboard();
+    await handlePostAuthNavigation();
   } catch {
     setAuthError('Invalid token. Try again.');
     event.target.value = '';
@@ -77,14 +86,16 @@ async function bootstrapAuth() {
     });
     if (!response.ok) {
       show('authV');
-      return;
+      return false;
     }
     authToken = '';
     setAuthError('');
     show('dashV');
     renderDashboard();
+    return true;
   } catch {
     show('authV');
+    return false;
   }
 }
 
@@ -99,6 +110,7 @@ async function logout() {
   authToken = '';
   proj = null;
   mode = 'build';
+  githubUi = defaultGitHubUi();
   clearLog();
   setAuthError('');
   show('authV');
@@ -233,9 +245,35 @@ function saveProjects() {
   localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
 }
 
+function defaultGitHubUi() {
+  return {
+    loaded: false,
+    loading: false,
+    configured: false,
+    connected: false,
+    needsInstallation: false,
+    login: '',
+    avatarUrl: '',
+    error: '',
+    mode: 'create',
+    repos: [],
+    repoPage: 1,
+    hasMore: false,
+    reposLoading: false,
+    repoSearch: '',
+    selectedRepoId: null,
+    selectedRepoName: '',
+    createName: '',
+    createPrivate: true,
+    actionError: '',
+    actionInfo: ''
+  };
+}
+
 function show(id) {
   document.querySelectorAll('.view').forEach((view) => view.classList.remove('active'));
   byId(id)?.classList.add('active');
+  renderUiNotice();
 }
 
 function toDash() {
@@ -243,6 +281,59 @@ function toDash() {
   mode = 'build';
   show('dashV');
   renderDashboard();
+}
+
+function consumeReturnStateFromUrl() {
+  const url = new URL(window.location.href);
+  const githubState = url.searchParams.get('github');
+  const message = url.searchParams.get('message');
+  pendingResumeSessionId = url.searchParams.get('resumeSession') || null;
+
+  if (githubState || message) {
+    uiNotice = {
+      tone: /failed|error|not_configured/i.test(githubState || '') ? 'error' : 'info',
+      message: message || humanizeGitHubState(githubState)
+    };
+  }
+
+  if (githubState || message || pendingResumeSessionId) {
+    url.searchParams.delete('github');
+    url.searchParams.delete('message');
+    url.searchParams.delete('resumeSession');
+    history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+async function handlePostAuthNavigation() {
+  renderUiNotice();
+  if (!pendingResumeSessionId) return;
+
+  const existingIndex = projects.findIndex((project) => project.sessionId === pendingResumeSessionId);
+  if (existingIndex === -1) {
+    projects.unshift({
+      storage: 'preview',
+      sessionId: pendingResumeSessionId,
+      name: 'Preview session',
+      previewUrl: '',
+      expiresAt: null,
+      plan: null,
+      log: null,
+      brief: null,
+      intake: null,
+      siteFiles: [],
+      shipped: null,
+      deployed: false
+    });
+    saveProjects();
+    renderProjects();
+    pendingResumeSessionId = null;
+    await openProj(0);
+    return;
+  }
+
+  const index = existingIndex;
+  pendingResumeSessionId = null;
+  await openProj(index);
 }
 
 function setMode(nextMode) {
@@ -254,6 +345,22 @@ function setMode(nextMode) {
 }
 
 async function api(path, data) {
+  return requestJson(path, {
+    method: 'POST',
+    data
+  });
+}
+
+async function apiGet(path) {
+  return requestJson(path, {
+    method: 'GET'
+  });
+}
+
+async function requestJson(path, {
+  method = 'GET',
+  data = null
+} = {}) {
   const headers = {
     'Content-Type': 'application/json'
   };
@@ -262,10 +369,10 @@ async function api(path, data) {
   }
 
   const response = await fetch(path, {
-    method: 'POST',
+    method,
     credentials: 'same-origin',
     headers,
-    body: JSON.stringify(data)
+    body: data ? JSON.stringify(data) : undefined
   });
   const raw = await response.text();
   let json = null;
@@ -317,6 +424,7 @@ function renderDashboard() {
   applyStarterDraftToInputs();
   renderStarter();
   renderProjects();
+  renderUiNotice();
 }
 
 function renderStarter() {
@@ -820,7 +928,8 @@ function previewProjectMeta(project) {
   const pieces = [];
   if (project.sessionId) pieces.push(`session ${project.sessionId.slice(0, 8)}`);
   if (project.expiresAt) pieces.push(`expires ${new Date(project.expiresAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`);
-  if (project.shipped?.owner && project.shipped?.repo) pieces.push(`saved to ${project.shipped.owner}/${project.shipped.repo}`);
+  if (project.shipped?.repoFullName) pieces.push(`saved to ${project.shipped.repoFullName}`);
+  else if (project.shipped?.owner && project.shipped?.repo) pieces.push(`saved to ${project.shipped.owner}/${project.shipped.repo}`);
   return pieces.join(' | ');
 }
 
@@ -834,6 +943,7 @@ function removeProject(index) {
 async function openProj(index) {
   proj = { ...projects[index], _index: index };
   mode = 'build';
+  prepareGitHubUiForProject(proj);
   byId('hName').textContent = projectDisplayName(proj);
   show('workV');
   clearLog();
@@ -857,11 +967,15 @@ async function openProj(index) {
         proj.repo = status.shipped.repo;
         proj.branch = status.shipped.branch;
         proj.mainBranch = status.shipped.mainBranch;
+      } else {
+        proj.branch = null;
+        proj.mainBranch = null;
       }
       projects[proj._index] = { ...proj };
       saveProjects();
       renderPersistedLog();
       log('Preview session resumed.', 'ok');
+      prepareGitHubUiForProject(proj);
     } catch (error) {
       if (/expired/i.test(error.message)) {
         projects.splice(index, 1);
@@ -893,6 +1007,23 @@ async function openProj(index) {
   setMode('build');
   renderSteps();
   renderWork();
+}
+
+function prepareGitHubUiForProject(project) {
+  if (!isPreviewProject(project)) {
+    githubUi = defaultGitHubUi();
+    return;
+  }
+
+  const suggestedName = slugifyRepoName(project?.brief?.name || project?.name || 'sheeper-site');
+  githubUi = {
+    ...githubUi,
+    createName: githubUi.createName || suggestedName,
+    actionError: '',
+    actionInfo: '',
+    selectedRepoId: project?.shipped?.repoId || githubUi.selectedRepoId,
+    selectedRepoName: project?.shipped?.repoFullName || githubUi.selectedRepoName
+  };
 }
 
 function renderSteps() {
@@ -1001,6 +1132,7 @@ async function prepareUploads() {
 
 function renderWork() {
   const container = byId('wMain');
+  renderUiNotice();
   if (!container) return;
   if (!proj) {
     container.innerHTML = '<div class="helper-copy">No project selected.</div>';
@@ -1175,11 +1307,12 @@ function renderShipPanel(project) {
     return `
       <div class="ob">
         <div class="ot">Saved To GitHub</div>
-        <div style="font-size:1rem;font-weight:600;color:var(--bright);margin-bottom:0.35rem;">${esc(project.shipped.owner)}/${esc(project.shipped.repo)}</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--bright);margin-bottom:0.35rem;">${esc(project.shipped.repoFullName || `${project.shipped.owner}/${project.shipped.repo}`)}</div>
         <div class="helper-copy" style="margin-bottom:1rem;">Preview snapshot saved on ${esc(project.shipped.branch)}. Approve to merge it into ${esc(project.shipped.mainBranch || 'main')} or discard the branch.</div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
           <button type="button" class="btn btn-a" onclick="doApprove()">Approve And Merge</button>
           <button type="button" class="btn btn-d" onclick="doReject()">Discard Branch</button>
+          <button type="button" class="btn btn-g" onclick="disconnectGitHub()" ${busy ? 'disabled' : ''}>Disconnect GitHub</button>
         </div>
       </div>
     `;
@@ -1194,35 +1327,327 @@ function renderShipPanel(project) {
     `;
   }
 
+  if (!githubUi.loaded && !githubUi.loading) {
+    loadGitHubStatus();
+  }
+
   return `
     <div class="ob">
       <div class="ot">Save To GitHub</div>
-      <div class="helper-copy" style="margin-bottom:1rem;">When you like the preview, save this exact state to an existing repo on a SHEEPER staging branch.</div>
-      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.75rem;">
-        <div class="fg">
-          <label class="fl" for="shipOwner">GitHub Owner</label>
-          <input type="text" id="shipOwner" class="input" placeholder="bdod-prod" value="${esc(project.shipOwner || project.owner || '')}" oninput="cacheShipDraft()" spellcheck="false" autocomplete="off">
-        </div>
-        <div class="fg">
-          <label class="fl" for="shipRepo">Repository</label>
-          <input type="text" id="shipRepo" class="input" placeholder="sheeper-sandbox" value="${esc(project.shipRepo || project.repo || '')}" oninput="cacheShipDraft()" spellcheck="false" autocomplete="off">
-        </div>
-      </div>
-      <div id="shipErr" class="eb${project.shipError ? ' on' : ''}" role="alert" aria-live="assertive" style="margin-top:0.9rem;">${esc(project.shipError || '')}</div>
-      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
-        <button type="button" class="btn btn-p" onclick="shipPreviewToGitHub()" ${busy ? 'disabled' : ''}>Save Preview To GitHub</button>
-      </div>
+      <div class="helper-copy" style="margin-bottom:1rem;">The SHEEPER token is only app access. GitHub stays optional until you decide to save this preview.</div>
+      ${renderGitHubPanel(project)}
     </div>
   `;
 }
 
-function cacheShipDraft() {
-  if (!proj) return;
-  proj.shipOwner = valueOf('shipOwner');
-  proj.shipRepo = valueOf('shipRepo');
-  proj.shipError = '';
-  projects[proj._index] = { ...proj };
-  saveProjects();
+function renderGitHubPanel(project) {
+  if (githubUi.loading && !githubUi.loaded) {
+    return `<div class="helper-copy">Checking GitHub connection...</div>`;
+  }
+
+  if (!githubUi.configured) {
+    return `
+      <div class="helper-copy">GitHub App connect is not configured on this deployment yet. Preview-first still works; ownership wiring needs the GitHub App secrets.</div>
+    `;
+  }
+
+  const errorMarkup = githubUi.actionError
+    ? `<div id="shipErr" class="eb on" role="alert" aria-live="assertive" style="margin-top:0.9rem;">${esc(githubUi.actionError)}</div>`
+    : '';
+  const infoMarkup = githubUi.actionInfo
+    ? `<div class="helper-copy" style="margin-top:0.9rem;color:var(--acc);">${esc(githubUi.actionInfo)}</div>`
+    : '';
+
+  if (githubUi.error && !githubUi.connected) {
+    return `
+      <div class="helper-copy">GitHub connect hit a problem: ${esc(githubUi.error)}</div>
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button type="button" class="btn btn-p" onclick="loadGitHubStatus(true)" ${busy ? 'disabled' : ''}>Retry GitHub Check</button>
+      </div>
+    `;
+  }
+
+  if (!githubUi.connected) {
+    return `
+      <div class="helper-copy">See the result first, then connect GitHub only if you want ownership. When you do, SHEEPER can create a repo for you or save into one the app can access.</div>
+      ${errorMarkup}
+      ${infoMarkup}
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button type="button" class="btn btn-p" onclick="startGitHubConnect()" ${busy ? 'disabled' : ''}>Connect GitHub</button>
+      </div>
+    `;
+  }
+
+  const identity = `
+    <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;margin-bottom:1rem;">
+      <div>
+        <div class="fl" style="margin-bottom:0.15rem;">Connected GitHub</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--bright);">${esc(githubUi.login)}</div>
+      </div>
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+        <button type="button" class="btn btn-g" onclick="disconnectGitHub()" ${busy ? 'disabled' : ''}>Disconnect GitHub</button>
+      </div>
+    </div>
+  `;
+
+  if (githubUi.needsInstallation) {
+    return `
+      ${identity}
+      <div class="helper-copy">GitHub is connected, but SHEEPER still needs to be installed on your personal account before repo creation or repo selection will work.</div>
+      ${errorMarkup}
+      ${infoMarkup}
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button type="button" class="btn btn-p" onclick="startGitHubInstall()" ${busy ? 'disabled' : ''}>Install SHEEPER On GitHub</button>
+      </div>
+    `;
+  }
+
+  return `
+    ${identity}
+    <div class="helper-copy" style="margin-bottom:1rem;">Choose the ownership path you want. New repos default to private. Existing repos only appear if the SHEEPER GitHub App can access them.</div>
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <button type="button" class="btn ${githubUi.mode === 'create' ? 'btn-p' : 'btn-g'}" onclick="setGitHubShipMode('create')" ${busy ? 'disabled' : ''}>Create New Repo</button>
+      <button type="button" class="btn ${githubUi.mode === 'existing' ? 'btn-p' : 'btn-g'}" onclick="setGitHubShipMode('existing')" ${busy ? 'disabled' : ''}>Use Existing Repo</button>
+      <button type="button" class="btn btn-g" onclick="startGitHubInstall()" ${busy ? 'disabled' : ''}>Manage GitHub Access</button>
+    </div>
+    ${githubUi.mode === 'existing' ? renderExistingRepoPicker() : renderCreateRepoPanel(project)}
+    ${errorMarkup}
+    ${infoMarkup}
+  `;
+}
+
+function renderCreateRepoPanel(project) {
+  const suggestedName = githubUi.createName || slugifyRepoName(project?.brief?.name || project?.name || 'sheeper-site');
+  return `
+    <div class="fg">
+      <label class="fl" for="shipCreateName">New Repo Name</label>
+      <input type="text" id="shipCreateName" class="input" placeholder="sheeper-site" value="${esc(suggestedName)}" oninput="setGitHubCreateName(this.value)" spellcheck="false" autocomplete="off">
+    </div>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.9rem;">
+      <label class="mono" style="font-size:0.75rem;color:var(--dim);display:flex;gap:0.45rem;align-items:center;">
+        <input type="radio" name="shipVisibility" ${githubUi.createPrivate ? 'checked' : ''} onchange="setGitHubCreateVisibility(true)">
+        Private (default)
+      </label>
+      <label class="mono" style="font-size:0.75rem;color:var(--dim);display:flex;gap:0.45rem;align-items:center;">
+        <input type="radio" name="shipVisibility" ${githubUi.createPrivate ? '' : 'checked'} onchange="setGitHubCreateVisibility(false)">
+        Public
+      </label>
+    </div>
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+      <button type="button" class="btn btn-p" onclick="createRepoAndShip()" ${busy ? 'disabled' : ''}>Create Repo And Save Preview</button>
+    </div>
+  `;
+}
+
+function renderExistingRepoPicker() {
+  if (!githubUi.repos.length && !githubUi.reposLoading) {
+    loadGitHubRepos(true);
+  }
+
+  const filtered = filterVisibleGitHubRepos();
+  const listMarkup = filtered.length
+    ? filtered.map((repo) => `
+        <button
+          type="button"
+          class="btn ${Number(githubUi.selectedRepoId) === Number(repo.id) ? 'btn-p' : 'btn-g'} btn-s"
+          style="justify-content:flex-start;text-align:left;width:100%;"
+          onclick="selectGitHubRepo(${repo.id}, '${esc(repo.fullName)}')"
+        >
+          <span style="display:flex;flex-direction:column;align-items:flex-start;">
+            <span>${esc(repo.fullName)}</span>
+            <span class="mono" style="font-size:0.65rem;color:var(--dim);">${esc(repo.defaultBranch || 'main')} | ${repo.private ? 'private' : 'public'}</span>
+          </span>
+        </button>
+      `).join('')
+    : `<div class="helper-copy">${githubUi.reposLoading ? 'Loading repos...' : 'No accessible repos match this search yet.'}</div>`;
+
+  return `
+    <div class="fg">
+      <label class="fl" for="shipRepoSearch">Search Accessible Repos</label>
+      <input type="text" id="shipRepoSearch" class="input" placeholder="Search by repo name..." value="${esc(githubUi.repoSearch)}" oninput="setGitHubRepoSearch(this.value)" spellcheck="false" autocomplete="off">
+    </div>
+    <div style="display:grid;gap:0.55rem;margin-top:0.9rem;max-height:260px;overflow:auto;">${listMarkup}</div>
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+      <button type="button" class="btn btn-p" onclick="shipPreviewToGitHub()" ${busy || !githubUi.selectedRepoId ? 'disabled' : ''}>Save Preview To Selected Repo</button>
+      ${githubUi.hasMore ? `<button type="button" class="btn btn-g" onclick="loadGitHubRepos(false)" ${githubUi.reposLoading ? 'disabled' : ''}>Load More</button>` : ''}
+    </div>
+  `;
+}
+
+async function loadGitHubStatus(force = false) {
+  if (githubUi.loading) return;
+  if (githubUi.loaded && !force) return;
+
+  githubUi.loading = true;
+  if (force) githubUi.error = '';
+  renderWork();
+
+  try {
+    const status = await apiGet('/api/github/connect/status');
+    githubUi = {
+      ...githubUi,
+      loaded: true,
+      loading: false,
+      configured: Boolean(status.configured),
+      connected: Boolean(status.connected),
+      needsInstallation: Boolean(status.needsInstallation),
+      login: status.login || '',
+      avatarUrl: status.avatarUrl || '',
+      error: status.error || '',
+      actionError: '',
+      actionInfo: ''
+    };
+
+    if (!githubUi.connected) {
+      githubUi.repos = [];
+      githubUi.selectedRepoId = null;
+      githubUi.selectedRepoName = '';
+      githubUi.hasMore = false;
+      githubUi.repoPage = 1;
+    }
+  } catch (error) {
+    githubUi = {
+      ...githubUi,
+      loaded: true,
+      loading: false,
+      error: error.message
+    };
+  } finally {
+    renderWork();
+  }
+}
+
+function startGitHubConnect() {
+  if (!proj?.sessionId) return;
+  window.location.href = `/api/github/connect/start?sessionId=${encodeURIComponent(proj.sessionId)}`;
+}
+
+function startGitHubInstall() {
+  if (!proj?.sessionId) return;
+  window.location.href = `/api/github/install/start?sessionId=${encodeURIComponent(proj.sessionId)}`;
+}
+
+async function disconnectGitHub() {
+  if (busy) return;
+  busy = true;
+  githubUi.actionError = '';
+  githubUi.actionInfo = '';
+  renderWork();
+
+  try {
+    await api('/api/github/connect/disconnect', {
+      sessionId: proj?.sessionId || null
+    });
+    githubUi = {
+      ...defaultGitHubUi(),
+      configured: githubUi.configured,
+      loaded: true
+    };
+    log('GitHub disconnected for this browser session.', 'in');
+  } catch (error) {
+    githubUi.actionError = error.message;
+  } finally {
+    busy = false;
+    renderWork();
+  }
+}
+
+function setGitHubShipMode(nextMode) {
+  githubUi.mode = nextMode === 'existing' ? 'existing' : 'create';
+  githubUi.actionError = '';
+  githubUi.actionInfo = '';
+  renderWork();
+}
+
+function setGitHubCreateName(value) {
+  githubUi.createName = slugifyRepoName(value);
+  githubUi.actionError = '';
+}
+
+function setGitHubCreateVisibility(isPrivate) {
+  githubUi.createPrivate = Boolean(isPrivate);
+  githubUi.actionError = '';
+  renderWork();
+}
+
+function setGitHubRepoSearch(value) {
+  githubUi.repoSearch = value;
+  renderWork();
+}
+
+function selectGitHubRepo(repoId, fullName) {
+  githubUi.selectedRepoId = Number(repoId);
+  githubUi.selectedRepoName = fullName || '';
+  githubUi.actionError = '';
+  renderWork();
+}
+
+async function loadGitHubRepos(reset = false) {
+  if (githubUi.reposLoading) return;
+  if (!githubUi.connected || githubUi.needsInstallation) return;
+
+  githubUi.reposLoading = true;
+  githubUi.actionError = '';
+  renderWork();
+
+  try {
+    const nextPage = reset ? 1 : (githubUi.repoPage || 1);
+    const response = await apiGet(`/api/github/repos?page=${nextPage}`);
+    const merged = reset ? response.repos : [...githubUi.repos, ...response.repos];
+    const seen = new Set();
+    githubUi.repos = merged.filter((repo) => {
+      if (seen.has(repo.id)) return false;
+      seen.add(repo.id);
+      return true;
+    });
+    githubUi.repoPage = nextPage + 1;
+    githubUi.hasMore = Boolean(response.hasMore);
+  } catch (error) {
+    githubUi.actionError = error.message;
+  } finally {
+    githubUi.reposLoading = false;
+    renderWork();
+  }
+}
+
+function filterVisibleGitHubRepos() {
+  const query = String(githubUi.repoSearch || '').trim().toLowerCase();
+  if (!query) return githubUi.repos;
+  return githubUi.repos.filter((repo) => repo.fullName.toLowerCase().includes(query));
+}
+
+async function createRepoAndShip() {
+  if (!proj?.sessionId || busy) return;
+  const name = slugifyRepoName(githubUi.createName || proj?.brief?.name || proj?.name || 'sheeper-site');
+  if (!name) {
+    githubUi.actionError = 'Give the new repo a name before saving the preview.';
+    renderWork();
+    return;
+  }
+
+  busy = true;
+  githubUi.actionError = '';
+  githubUi.actionInfo = '';
+  renderWork();
+
+  try {
+    const repo = await api('/api/github/repos/create', {
+      name,
+      private: githubUi.createPrivate,
+      sessionId: proj.sessionId
+    });
+    githubUi.actionInfo = `Created ${repo.fullName}. Saving the preview there now...`;
+    githubUi.selectedRepoId = repo.id;
+    githubUi.selectedRepoName = repo.fullName;
+    githubUi.repos = [repo, ...githubUi.repos.filter((entry) => Number(entry.id) !== Number(repo.id))];
+    githubUi.mode = 'existing';
+    await shipPreviewToGitHub(repo.id);
+  } catch (error) {
+    githubUi.actionError = error.message;
+  } finally {
+    busy = false;
+    renderWork();
+  }
 }
 
 async function runStep() {
@@ -1387,29 +1812,24 @@ async function runEdit() {
   }
 }
 
-async function shipPreviewToGitHub() {
+async function shipPreviewToGitHub(repoIdOverride = null) {
   if (!proj || !isPreviewProject(proj) || busy) return;
-
-  cacheShipDraft();
-  if (!proj.shipOwner || !proj.shipRepo) {
-    proj.shipError = 'Set the target GitHub owner and repo before saving the preview.';
-    projects[proj._index] = { ...proj };
-    saveProjects();
+  const repoId = Number(repoIdOverride || githubUi.selectedRepoId);
+  if (!repoId) {
+    githubUi.actionError = 'Choose a GitHub repo before saving the preview.';
     renderWork();
     return;
   }
 
   busy = true;
-  proj.shipError = '';
-  projects[proj._index] = { ...proj };
-  saveProjects();
+  githubUi.actionError = '';
+  githubUi.actionInfo = '';
   renderWork();
 
   try {
     const response = await api('/api/ship/github', {
       sessionId: proj.sessionId,
-      owner: proj.shipOwner,
-      repo: proj.shipRepo
+      repoId
     });
 
     proj.owner = response.owner;
@@ -1418,12 +1838,15 @@ async function shipPreviewToGitHub() {
     proj.mainBranch = response.mainBranch;
     proj.shipped = response.shipped;
     if (response.log) proj.log = response.log;
+    githubUi.selectedRepoId = response.repoId || repoId;
+    githubUi.selectedRepoName = response.repoFullName || `${response.owner}/${response.repo}`;
+    githubUi.actionInfo = `Saved preview to ${githubUi.selectedRepoName}.`;
     projects[proj._index] = { ...proj };
     saveProjects();
     renderPersistedLog();
     renderWork();
   } catch (error) {
-    proj.shipError = error.message;
+    githubUi.actionError = error.message;
     await refreshPreviewProjectState();
     projects[proj._index] = { ...proj };
     saveProjects();
@@ -1477,7 +1900,8 @@ async function doReject() {
       proj.branch = null;
       proj.mainBranch = null;
       proj.shipped = null;
-      proj.shipError = '';
+      githubUi.actionError = '';
+      githubUi.actionInfo = '';
       projects[proj._index] = { ...proj };
       saveProjects();
       renderPersistedLog();
@@ -1552,7 +1976,11 @@ async function refreshPreviewProjectState() {
       proj.repo = status.shipped.repo;
       proj.branch = status.shipped.branch;
       proj.mainBranch = status.shipped.mainBranch;
+    } else {
+      proj.branch = null;
+      proj.mainBranch = null;
     }
+    prepareGitHubUiForProject(proj);
     projects[proj._index] = { ...proj };
     saveProjects();
     renderPersistedLog();
@@ -1632,6 +2060,44 @@ function renderPreviewMarkup(previewUrl, isLive = false) {
   `;
 }
 
+function renderUiNotice() {
+  const markup = uiNotice
+    ? `<div class="eb on" style="margin-bottom:1rem;border-color:${uiNotice.tone === 'error' ? 'rgba(255,77,79,0.22)' : 'rgba(0,255,106,0.18)'};color:${uiNotice.tone === 'error' ? 'var(--red)' : 'var(--acc)'};">${esc(uiNotice.message)}</div>`
+    : '';
+
+  const dash = byId('dashNotice');
+  if (dash) dash.innerHTML = markup;
+  const work = byId('workNotice');
+  if (work) work.innerHTML = markup;
+}
+
+function humanizeGitHubState(value) {
+  switch (value) {
+    case 'github_connected':
+      return 'GitHub connected.';
+    case 'github_installed':
+      return 'GitHub installation is ready.';
+    case 'github_connect_failed':
+      return 'GitHub connection failed.';
+    case 'github_install_failed':
+      return 'GitHub installation could not be completed.';
+    case 'github_not_configured':
+      return 'GitHub App is not configured on this deployment yet.';
+    default:
+      return '';
+  }
+}
+
+function slugifyRepoName(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return normalized || 'sheeper-site';
+}
+
 function setAuthError(message) {
   const element = byId('authErr');
   if (!element) return;
@@ -1692,12 +2158,23 @@ window.logout = logout;
 window.renderWork = renderWork;
 window.runStep = runStep;
 window.runEdit = runEdit;
-window.cacheShipDraft = cacheShipDraft;
+window.loadGitHubStatus = loadGitHubStatus;
+window.startGitHubConnect = startGitHubConnect;
+window.startGitHubInstall = startGitHubInstall;
+window.disconnectGitHub = disconnectGitHub;
+window.setGitHubShipMode = setGitHubShipMode;
+window.setGitHubCreateName = setGitHubCreateName;
+window.setGitHubCreateVisibility = setGitHubCreateVisibility;
+window.setGitHubRepoSearch = setGitHubRepoSearch;
+window.selectGitHubRepo = selectGitHubRepo;
+window.loadGitHubRepos = loadGitHubRepos;
+window.createRepoAndShip = createRepoAndShip;
 window.shipPreviewToGitHub = shipPreviewToGitHub;
 window.doApprove = doApprove;
 window.doReject = doReject;
 window.doApproveEdit = doApproveEdit;
 window.doRejectEdit = doRejectEdit;
+
 
 
 

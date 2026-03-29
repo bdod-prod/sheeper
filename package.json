@@ -12,6 +12,7 @@
     "deploy": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper",
     "deploy:main": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper --branch main",
     "deploy:preview-worker": "npx --yes wrangler@4.78.0 deploy --config preview-session-worker/wrangler.toml",
+    "d1:apply": "npx --yes wrangler@4.78.0 d1 execute sheeper-app-db --remote --file ./db/app_schema.sql",
     "secrets:push": "node ./scripts/push-pages-secrets.mjs"
   },
   "repository": {

@@ -3,20 +3,26 @@
 // Then deletes the sheeper branch
 
 import {
+  allowSharedGitHubFallback,
   appendLogEvents,
   checkAuth, jsonResponse, errorResponse,
   createLogEvent, emitRuntimeLog,
-  githubPost, githubDelete, githubGet
+  githubPost, githubDelete, githubGet,
+  requireBrowserSession
 } from './_shared.js';
 import {
   getPreviewSession,
   updatePreviewSession
 } from './_preview.js';
+import {
+  createInstallationAccessToken,
+  ensureFreshGitHubConnection
+} from './_github_app.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  if (!checkAuth(request, env)) {
+  if (!(await checkAuth(request, env))) {
     return errorResponse('Unauthorized', 401);
   }
 
@@ -27,7 +33,12 @@ export async function onRequestPost(context) {
       return errorResponse('owner, repo, and branch are required', 400);
     }
 
-    const token = env.GITHUB_TOKEN;
+    const token = await resolveGitHubTokenForApproval(env, request, {
+      sessionId,
+      owner,
+      repo,
+      branch
+    });
     const target = targetBranch || 'main';
 
     // Merge the branch
@@ -53,6 +64,7 @@ export async function onRequestPost(context) {
         const updatedSession = await updatePreviewSession(env, request.url, sessionId, {
           deployed: true,
           shipped: {
+            ...(currentSession.shipped || {}),
             owner,
             repo,
             branch,
@@ -108,4 +120,42 @@ export async function onRequestPost(context) {
 
     return errorResponse(err.message || 'Failed to approve', 500);
   }
+}
+
+async function resolveGitHubTokenForApproval(env, request, {
+  sessionId,
+  owner,
+  repo,
+  branch
+}) {
+  if (sessionId) {
+    const browserSession = await requireBrowserSession(request, env);
+    const session = await getPreviewSession(env, request.url, sessionId);
+    const shipped = session.shipped || null;
+    if (!shipped?.installationId || !shipped?.connectionId) {
+      throw new Error('This preview does not have GitHub shipping metadata yet.');
+    }
+
+    const connection = await ensureFreshGitHubConnection(env, browserSession.id);
+    if (!connection) {
+      throw new Error('Reconnect GitHub before approving this branch.');
+    }
+    if (connection.id !== shipped.connectionId) {
+      throw new Error('This preview was saved with a different GitHub connection. Reconnect the original account or ship again.');
+    }
+    if (shipped.repoFullName && `${owner}/${repo}` !== shipped.repoFullName) {
+      throw new Error('The requested repository does not match the shipped preview metadata.');
+    }
+    if (shipped.branch && branch !== shipped.branch) {
+      throw new Error('The requested branch does not match the shipped preview metadata.');
+    }
+
+    return createInstallationAccessToken(env, shipped.installationId);
+  }
+
+  if (allowSharedGitHubFallback(env) && env.GITHUB_TOKEN) {
+    return env.GITHUB_TOKEN;
+  }
+
+  throw new Error('Approving a non-preview branch requires GitHub App support or the shared-token fallback.');
 }

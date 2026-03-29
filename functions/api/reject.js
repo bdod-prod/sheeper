@@ -2,19 +2,25 @@
 // Deletes a sheeper branch, discarding all changes
 
 import {
+  allowSharedGitHubFallback,
   appendLogEvents,
   checkAuth, jsonResponse, errorResponse, githubDelete,
-  createLogEvent, emitRuntimeLog
+  createLogEvent, emitRuntimeLog,
+  requireBrowserSession
 } from './_shared.js';
 import {
   getPreviewSession,
   updatePreviewSession
 } from './_preview.js';
+import {
+  createInstallationAccessToken,
+  ensureFreshGitHubConnection
+} from './_github_app.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  if (!checkAuth(request, env)) {
+  if (!(await checkAuth(request, env))) {
     return errorResponse('Unauthorized', 401);
   }
 
@@ -31,7 +37,12 @@ export async function onRequestPost(context) {
       return errorResponse('Can only delete sheeper/* branches', 400);
     }
 
-    const token = env.GITHUB_TOKEN;
+    const token = await resolveGitHubTokenForReject(env, request, {
+      sessionId,
+      owner,
+      repo,
+      branch
+    });
 
     await githubDelete(
       `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
@@ -77,4 +88,42 @@ export async function onRequestPost(context) {
     console.error('Reject error:', err);
     return errorResponse(err.message || 'Failed to reject', 500);
   }
+}
+
+async function resolveGitHubTokenForReject(env, request, {
+  sessionId,
+  owner,
+  repo,
+  branch
+}) {
+  if (sessionId) {
+    const browserSession = await requireBrowserSession(request, env);
+    const session = await getPreviewSession(env, request.url, sessionId);
+    const shipped = session.shipped || null;
+    if (!shipped?.installationId || !shipped?.connectionId) {
+      throw new Error('This preview does not have GitHub shipping metadata yet.');
+    }
+
+    const connection = await ensureFreshGitHubConnection(env, browserSession.id);
+    if (!connection) {
+      throw new Error('Reconnect GitHub before discarding this branch.');
+    }
+    if (connection.id !== shipped.connectionId) {
+      throw new Error('This preview was saved with a different GitHub connection. Reconnect the original account or ship again.');
+    }
+    if (shipped.repoFullName && `${owner}/${repo}` !== shipped.repoFullName) {
+      throw new Error('The requested repository does not match the shipped preview metadata.');
+    }
+    if (shipped.branch && branch !== shipped.branch) {
+      throw new Error('The requested branch does not match the shipped preview metadata.');
+    }
+
+    return createInstallationAccessToken(env, shipped.installationId);
+  }
+
+  if (allowSharedGitHubFallback(env) && env.GITHUB_TOKEN) {
+    return env.GITHUB_TOKEN;
+  }
+
+  throw new Error('Rejecting a non-preview branch requires GitHub App support or the shared-token fallback.');
 }

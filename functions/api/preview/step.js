@@ -23,7 +23,7 @@ export async function onRequestPost(context) {
   let targetStep = 0;
   let startedLog = null;
 
-  if (!checkAuth(request, env)) {
+  if (!(await checkAuth(request, env))) {
     return errorResponse('Unauthorized', 401);
   }
 

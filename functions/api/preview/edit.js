@@ -22,7 +22,7 @@ export async function onRequestPost(context) {
   let startedLog = null;
   let userRequest = '';
 
-  if (!checkAuth(request, env)) {
+  if (!(await checkAuth(request, env))) {
     return errorResponse('Unauthorized', 401);
   }
 

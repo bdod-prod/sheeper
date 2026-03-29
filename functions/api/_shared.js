@@ -1,9 +1,15 @@
+import {
+  getBrowserSession,
+  touchBrowserSession
+} from './_appdb.js';
+
 const GITHUB_API = 'https://api.github.com';
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
 const XAI_API = 'https://api.x.ai/v1/chat/completions';
 const MAX_LOG_EVENTS = 200;
 const AUTH_COOKIE_NAME = 'sheeper_auth';
+const INSTALL_STATE_COOKIE_NAME = 'sheeper_install_state';
 const AUTH_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 const DEFAULT_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
@@ -23,15 +29,20 @@ const DEFAULT_AI_MODELS = {
   grok: 'grok-4.20-beta-latest-non-reasoning'
 };
 
-export function checkAuth(request, env) {
+export async function checkAuth(request, env) {
   const authHeader = request.headers.get('Authorization') || '';
   const headerToken = authHeader.replace('Bearer ', '').trim();
   if (headerToken && headerToken === env.SHEEPER_TOKEN) {
     return true;
   }
 
-  const cookieToken = parseCookies(request.headers.get('Cookie') || '')[AUTH_COOKIE_NAME];
-  return Boolean(cookieToken && cookieToken === env.SHEEPER_TOKEN);
+  if (!env.APP_DB || !env.APP_SESSION_SECRET) {
+    const cookieToken = parseCookies(request.headers.get('Cookie') || '')[AUTH_COOKIE_NAME];
+    return Boolean(cookieToken && decodeURIComponent(cookieToken) === env.SHEEPER_TOKEN);
+  }
+
+  const session = await getAuthenticatedBrowserSession(request, env);
+  return Boolean(session);
 }
 
 export function jsonResponse(data, status = 200, extraHeaders = {}) {
@@ -49,16 +60,56 @@ export function errorResponse(message, status = 500) {
   return jsonResponse({ error: message }, status);
 }
 
-export function authCookieHeader(requestUrl, token) {
+export async function authCookieHeader(requestUrl, sessionId, env) {
+  return signedCookieHeader(requestUrl, AUTH_COOKIE_NAME, sessionId, env);
+}
+
+export function legacyAuthCookieHeader(requestUrl, token) {
   const url = new URL(requestUrl);
   const secure = url.protocol === 'https:' ? '; Secure' : '';
   return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${AUTH_TTL_SECONDS}; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export function clearAuthCookieHeader(requestUrl) {
-  const url = new URL(requestUrl);
-  const secure = url.protocol === 'https:' ? '; Secure' : '';
-  return `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
+  return clearCookieHeader(requestUrl, AUTH_COOKIE_NAME);
+}
+
+export async function requireBrowserSession(request, env) {
+  const session = await getAuthenticatedBrowserSession(request, env);
+  if (!session) {
+    throw new Error('Unauthorized');
+  }
+  return session;
+}
+
+export async function installStateCookieHeader(requestUrl, state, env) {
+  return signedCookieHeader(requestUrl, INSTALL_STATE_COOKIE_NAME, state, env, {
+    maxAge: 60 * 10
+  });
+}
+
+export function clearInstallStateCookieHeader(requestUrl) {
+  return clearCookieHeader(requestUrl, INSTALL_STATE_COOKIE_NAME);
+}
+
+export async function readInstallStateCookie(request, env) {
+  const cookies = parseCookies(request.headers.get('Cookie') || '');
+  return verifySignedCookieValue(cookies[INSTALL_STATE_COOKIE_NAME], env);
+}
+
+export function allowSharedGitHubFallback(env) {
+  return String(env.ALLOW_SHARED_GITHUB_TOKEN_FALLBACK || 'false').trim().toLowerCase() === 'true';
+}
+
+export function redirectResponse(location, cookieHeaders = []) {
+  const headers = new Headers({ Location: location });
+  for (const cookie of cookieHeaders.filter(Boolean)) {
+    headers.append('Set-Cookie', cookie);
+  }
+  return new Response(null, {
+    status: 302,
+    headers
+  });
 }
 
 export function createLogEvent(type, message, {
@@ -586,6 +637,95 @@ function sanitizeLogData(value, depth = 0) {
     );
   }
   return String(value);
+}
+
+async function getAuthenticatedBrowserSession(request, env) {
+  if (!env.APP_DB || !env.APP_SESSION_SECRET) {
+    return null;
+  }
+
+  const cookies = parseCookies(request.headers.get('Cookie') || '');
+  const sessionId = await verifySignedCookieValue(cookies[AUTH_COOKIE_NAME], env);
+  if (!sessionId) {
+    return null;
+  }
+
+  return touchBrowserSession(env, sessionId);
+}
+
+async function signedCookieHeader(requestUrl, name, value, env, { maxAge = AUTH_TTL_SECONDS } = {}) {
+  const signedValue = await signCookieValue(value, env);
+  const url = new URL(requestUrl);
+  const secure = url.protocol === 'https:' ? '; Secure' : '';
+  return `${name}=${encodeURIComponent(signedValue)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${secure}`;
+}
+
+function clearCookieHeader(requestUrl, name) {
+  const url = new URL(requestUrl);
+  const secure = url.protocol === 'https:' ? '; Secure' : '';
+  return `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
+}
+
+async function signCookieValue(value, env) {
+  const secret = String(env.APP_SESSION_SECRET || '').trim();
+  if (!secret) {
+    throw new Error('APP_SESSION_SECRET is not configured.');
+  }
+
+  const payload = String(value || '');
+  const signature = await hmacSha256(secret, payload);
+  return `${payload}.${signature}`;
+}
+
+async function verifySignedCookieValue(rawValue, env) {
+  if (!rawValue) return null;
+  const decoded = decodeURIComponent(rawValue);
+  const separator = decoded.lastIndexOf('.');
+  if (separator === -1) return null;
+
+  const payload = decoded.slice(0, separator);
+  const signature = decoded.slice(separator + 1);
+  const expected = await hmacSha256(String(env.APP_SESSION_SECRET || '').trim(), payload);
+  if (!timingSafeEqual(signature, expected)) {
+    return null;
+  }
+  return payload;
+}
+
+async function hmacSha256(secret, payload) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
+  return base64UrlEncodeBytes(signature);
+}
+
+function base64UrlEncodeBytes(value) {
+  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function timingSafeEqual(left, right) {
+  const a = String(left || '');
+  const b = String(right || '');
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  let result = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    result |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  }
+  return result === 0;
 }
 
 function parseCookies(rawCookie) {

@@ -14,7 +14,9 @@ sheeper_cloudflare_pages_repo/
 |  |- api/
 |  |  |- _brief.js
 |  |  |- _generation.js
+|  |  |- _github_app.js
 |  |  |- _plan.js
+|  |  |- _appdb.js
 |  |  |- _preview.js
 |  |  |- _shared.js
 |  |  |- auth.js
@@ -25,6 +27,18 @@ sheeper_cloudflare_pages_repo/
 |  |  |- edit.js
 |  |  |- approve.js
 |  |  |- reject.js
+|  |  |- github/
+|  |  |  |- connect/
+|  |  |  |  |- start.js
+|  |  |  |  |- callback.js
+|  |  |  |  |- status.js
+|  |  |  |  `- disconnect.js
+|  |  |  |- install/
+|  |  |  |  |- start.js
+|  |  |  |  `- callback.js
+|  |  |  |- repos/
+|  |  |  |  `- create.js
+|  |  |  `- repos.js
 |  |  |- preview/
 |  |  |  |- start.js
 |  |  |  |- status.js
@@ -34,6 +48,8 @@ sheeper_cloudflare_pages_repo/
 |  |     `- github.js
 |  `- preview/
 |     `- [[path]].js
+|- db/
+|  `- app_schema.sql
 |- preview-session-worker/
 |  |- src/index.mjs
 |  `- wrangler.toml
@@ -56,8 +72,9 @@ SHEEPER is a conversational static-site builder with two distinct phases:
 - `functions/preview/[[path]].js` serves the protected live preview.
 
 2. **Ownership phase**
-- `functions/api/ship/github.js` saves the current preview state to an existing repo on a SHEEPER staging branch.
-- `functions/api/approve.js` and `functions/api/reject.js` reuse the existing branch merge/discard flow after shipping.
+- `functions/api/github/*` manages GitHub App connect, install, repo listing, and repo creation.
+- `functions/api/ship/github.js` saves the current preview state to a connected user's repo on a SHEEPER staging branch.
+- `functions/api/approve.js` and `functions/api/reject.js` reuse the existing branch merge/discard flow after shipping, but now respect the shipping connection.
 
 ## Preview-first architecture
 
@@ -68,6 +85,7 @@ Preview sessions are independent of the user's repo.
 - Preview URLs are protected with a session-scoped cookie and are intended for the same browser session only.
 - Session TTL is 24 hours.
 - GitHub becomes optional until the user clicks **Save To GitHub**.
+- GitHub is now designed around a per-user GitHub App connection instead of a single hidden server token.
 
 ## Logging and observability
 
@@ -87,16 +105,28 @@ The left-hand build log in the UI is now driven by persisted session events when
 
 ## Expected environment variables
 
-Required:
+Required for app auth and AI:
 
 - `SHEEPER_TOKEN`
-- `GITHUB_TOKEN`
 - `CLAUDE_API_KEY`
+
+Required for GitHub App shipping:
+
+- `APP_BASE_URL`
+- `APP_SESSION_SECRET`
+- `GITHUB_APP_ID`
+- `GITHUB_APP_CLIENT_ID`
+- `GITHUB_APP_CLIENT_SECRET`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_SLUG`
+- `GITHUB_TOKEN_ENCRYPTION_KEY`
 
 Optional:
 
 - `OPENAI_API_KEY`
 - `XAI_API_KEY`
+- `GITHUB_TOKEN`
+- `ALLOW_SHARED_GITHUB_TOKEN_FALLBACK=false`
 
 Optional routing and model controls:
 
@@ -137,14 +167,20 @@ The Pages app now expects these bindings from `wrangler.toml`:
 
 - `PREVIEW_ASSETS` -> R2 bucket `sheeper-preview-assets`
 - `PREVIEW_SESSIONS` -> Durable Object class `PreviewSessionDO` from worker script `sheeper-preview-session`
+- `APP_DB` -> D1 database for browser sessions, GitHub connections, and OAuth state
 
 Recommended order:
 
 1. Create the R2 bucket `sheeper-preview-assets` if it does not exist.
-2. Deploy the preview worker:
+2. Create the D1 database `sheeper-app-db`, then apply `db/app_schema.sql`.
+3. Bind that D1 database as `APP_DB` in the Pages project.
+4. Deploy the preview worker:
    - `npm.cmd run deploy:preview-worker`
-3. Deploy the Pages app:
+5. Configure the GitHub App secrets in Pages / `.dev.vars`.
+6. Deploy the Pages app:
    - `npm.cmd run deploy:main`
+
+Note: this repo includes the D1 schema and code paths, but the live D1 binding still has to be provisioned in Cloudflare before the GitHub App flow can work in a deployed environment.
 
 ## Local development
 
@@ -180,13 +216,14 @@ npm.cmd run secrets:push -- --only GITHUB_TOKEN,OPENAI_API_KEY
 - Source-material intake supports URL, pasted text, and uploaded text-friendly files.
 - Protected 24-hour preview sessions are implemented via Durable Object + R2.
 - GitHub save happens after preview on a SHEEPER staging branch.
+- Per-user GitHub App connect flow is implemented in code, with repo creation and searchable existing-repo selection.
 - Repo-backed endpoints still exist as a migration fallback.
 - Canonical repo is published at `bdod-prod/sheeper`.
 
 ## Next engineering tasks
 
-1. Run the first real browser-based alpha flow against a sandbox repo.
-2. Create the Cloudflare bucket and deploy the preview-session worker if they are not live yet.
-3. Verify preview session resume, expiration, and post-ship approve/reject behavior end to end.
+1. Provision the D1 binding and GitHub App secrets in Cloudflare Pages.
+2. Run the first full browser-based alpha flow through Connect GitHub -> Create new repo -> Save preview.
+3. Verify existing-repo picker behavior against an installation scoped to only selected repositories.
 4. Decide whether to add download/export before asking for GitHub.
 5. Add guardrails for large repos and oversized AI/file responses.

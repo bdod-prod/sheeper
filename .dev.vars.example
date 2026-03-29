@@ -1,5 +1,17 @@
 SHEEPER_TOKEN=replace-me
-GITHUB_TOKEN=replace-me
+APP_BASE_URL=https://preview-first-alpha.sheeper.pages.dev
+APP_SESSION_SECRET=replace-me
+GITHUB_APP_ID=
+GITHUB_APP_CLIENT_ID=
+GITHUB_APP_CLIENT_SECRET=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_APP_SLUG=
+GITHUB_TOKEN_ENCRYPTION_KEY=replace-me
+
+# Optional hidden migration fallback. Leave off in the default product path.
+ALLOW_SHARED_GITHUB_TOKEN_FALLBACK=false
+GITHUB_TOKEN=
+
 CLAUDE_API_KEY=replace-me
 OPENAI_API_KEY=
 XAI_API_KEY=

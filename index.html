@@ -638,14 +638,15 @@
             <div class="hdr-b" style="font-size:1.3rem;letter-spacing:0.18em;">SHEEPER</div>
             <div class="helper-copy" style="margin-top:0.4rem;">You talk, it ships.</div>
           </div>
-          <div class="fg">
-            <label class="fl" for="tokIn">Access Token</label>
-            <input type="password" id="tokIn" class="input" name="accessToken" autocomplete="current-password" aria-label="Access token" placeholder="Paste the SHEEPER token and press Enter" autofocus>
+            <div class="fg">
+              <label class="fl" for="tokIn">Access Token</label>
+              <input type="password" id="tokIn" class="input" name="accessToken" autocomplete="current-password" aria-label="Access token" placeholder="Paste the SHEEPER token and press Enter" autofocus>
+            </div>
+            <div class="helper-copy">The SHEEPER token unlocks this app. GitHub stays out of the way until you decide to save a preview.</div>
+            <div id="authErr" class="eb" role="alert" aria-live="assertive">Invalid token. Try again.</div>
           </div>
-          <div id="authErr" class="eb" role="alert" aria-live="assertive">Invalid token. Try again.</div>
         </div>
       </div>
-    </div>
   </div>
 
   <div id="dashV" class="view">
@@ -659,14 +660,15 @@
       </div>
     </div>
 
-    <div class="dash-shell">
-      <section class="panel starter-panel">
-        <div class="panel-body">
-          <div>
-            <div class="eyebrow">Project Starter</div>
-            <div class="panel-title">Describe the site. I will only ask questions if I need them.</div>
-            <div class="panel-copy">Describe what you want and let SHEEPER show the result first. GitHub only enters the picture when you decide to save the preview.</div>
-          </div>
+      <div class="dash-shell">
+        <section class="panel starter-panel">
+          <div class="panel-body">
+            <div id="dashNotice"></div>
+            <div>
+              <div class="eyebrow">Project Starter</div>
+              <div class="panel-title">Describe the site. I will only ask questions if I need them.</div>
+              <div class="panel-copy">Describe what you want and let SHEEPER show the result first. GitHub only enters the picture when you decide to save the preview.</div>
+            </div>
 
           <details id="advDetails" class="adv">
             <summary>Advanced details (optional)</summary>
@@ -767,15 +769,18 @@
       </div>
     </div>
 
-    <div class="ws" style="flex:1;">
-      <div class="sb" id="sideB">
-        <div class="sb-t">Build Plan</div>
+      <div class="ws" style="flex:1;">
+        <div class="sb" id="sideB">
+          <div class="sb-t">Build Plan</div>
         <div id="sList"></div>
         <div class="lp" id="logP" role="log"><div id="logE" aria-live="polite"></div></div>
       </div>
-      <div class="wm" id="wMain"></div>
+      <div class="wm">
+        <div id="workNotice"></div>
+        <div id="wMain"></div>
+      </div>
+      </div>
     </div>
-  </div>
 
   <script src="app.js"></script>
 </body>

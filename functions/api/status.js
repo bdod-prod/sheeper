@@ -9,7 +9,7 @@ import {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  if (!checkAuth(request, env)) {
+  if (!(await checkAuth(request, env))) {
     return errorResponse('Unauthorized', 401);
   }
 

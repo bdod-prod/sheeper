@@ -12,3 +12,9 @@ preview_bucket_name = "sheeper-preview-assets"
 name = "PREVIEW_SESSIONS"
 class_name = "PreviewSessionDO"
 script_name = "sheeper-preview-session"
+
+# Provision a D1 database named "sheeper-app-db", then uncomment and fill in the real id.
+# [[d1_databases]]
+# binding = "APP_DB"
+# database_name = "sheeper-app-db"
+# database_id = "REPLACE_WITH_D1_DATABASE_ID"
