@@ -69,6 +69,22 @@ Preview sessions are independent of the user's repo.
 - Session TTL is 24 hours.
 - GitHub becomes optional until the user clicks **Save To GitHub**.
 
+## Logging and observability
+
+SHEEPER now keeps two kinds of logs during preview-first builds:
+
+- **Persistent session events** inside `session.log.events`
+  - preview started
+  - plan generated
+  - step/edit started and completed
+  - GitHub ship, approve, and discard actions
+  - AI JSON parse status, including repair attempts when needed
+- **Cloudflare runtime logs** for the preview-session worker
+  - worker observability is enabled in `preview-session-worker/wrangler.toml`
+  - this is for debugging and postmortems, while `session.log.events` is the builder-facing history
+
+The left-hand build log in the UI is now driven by persisted session events whenever they are available, so reopening a preview session restores its meaningful history instead of only transient browser messages.
+
 ## Expected environment variables
 
 Required:

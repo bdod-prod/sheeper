@@ -1,7 +1,10 @@
 import {
+  appendLogEvents,
   checkAuth,
-  jsonResponse,
-  errorResponse
+  createLogEvent,
+  emitRuntimeLog,
+  errorResponse,
+  jsonResponse
 } from '../_shared.js';
 import {
   buildIntakeRecord,
@@ -39,18 +42,41 @@ export async function onRequestPost(context) {
     const templateContext = await loadTemplateContext(brief, env.GITHUB_TOKEN);
     const { plan, provider } = await generatePlan(env, brief, templateContext);
 
-    const log = {
+    const log = appendLogEvents({
       currentStep: 0,
       completedSteps: [],
-      totalFiles: [],
-      lastUpdated: new Date().toISOString()
-    };
+      totalFiles: []
+    }, [
+      createLogEvent('preview.started', `Preview session created for ${brief.name || 'new site'}.`, {
+        data: {
+          siteName: brief.name,
+          inputMode: brief.inputMode || 'guided',
+          sourceMode: brief.sourceMode || 'modernize',
+          sourceInputs: brief.sourceInputs || 'None'
+        }
+      }),
+      createLogEvent('plan.generated', `Build plan ready with ${(plan.steps || []).length} steps via ${provider}.`, {
+        data: {
+          provider,
+          overview: plan.overview || '',
+          stepCount: (plan.steps || []).length
+        }
+      })
+    ]);
 
     const session = await createPreviewSession(env, request.url, {
       brief,
       intake: intakeRecord,
       plan,
       log
+    });
+
+    emitRuntimeLog('preview.started', {
+      sessionId: session.sessionId,
+      siteName: brief.name,
+      inputMode: brief.inputMode || 'guided',
+      stepCount: (plan.steps || []).length,
+      provider
     });
 
     return jsonResponse({
@@ -67,6 +93,7 @@ export async function onRequestPost(context) {
       'Set-Cookie': previewCookieHeader(request.url, session.sessionId, session.previewSecret)
     });
   } catch (err) {
+    emitRuntimeLog('preview.start.failed', { error: err.message }, 'error');
     console.error('Preview start error:', err);
     return errorResponse(err.message || 'Failed to start preview session', 500);
   }

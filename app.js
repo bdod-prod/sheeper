@@ -814,6 +814,7 @@ async function openProj(index) {
       }
       projects[proj._index] = { ...proj };
       saveProjects();
+      renderPersistedLog();
       log('Preview session resumed.', 'ok');
     } catch (error) {
       if (/expired/i.test(error.message)) {
@@ -834,6 +835,7 @@ async function openProj(index) {
       proj.intake = status.intake || null;
       projects[proj._index] = { ...proj };
       saveProjects();
+      renderPersistedLog();
       log('Project resumed from git.', 'ok');
     } catch (error) {
       log(`Failed to load: ${error.message}`, 'er');
@@ -1223,6 +1225,7 @@ async function runStep() {
     if (response.siteFiles) proj.siteFiles = response.siteFiles;
     projects[proj._index] = { ...proj };
     saveProjects();
+    renderPersistedLog();
 
     if (proc) proc.style.display = 'none';
     if (result) result.style.display = 'block';
@@ -1235,12 +1238,11 @@ async function runStep() {
       ? '<button type="button" class="btn btn-a" onclick="doApprove()">Approve Build</button><button type="button" class="btn btn-d" onclick="doReject()">Discard Build</button>'
       : '<button type="button" class="btn btn-p" onclick="renderWork()">Continue</button>';
 
-    log(`Step complete: ${response.summary}`, 'ok');
-    if (response.provider) log(`AI: ${response.provider}`, 'in');
     renderSteps();
   } catch (error) {
     showErrorBox(errBox, error.message);
     addLine(error.message, 'er');
+    if (isPreviewProject(proj)) await refreshPreviewProjectState();
     log(`Error: ${error.message}`, 'er');
   } finally {
     busy = false;
@@ -1301,6 +1303,7 @@ async function runEdit() {
     if (response.log) proj.log = response.log;
     projects[proj._index] = { ...proj };
     saveProjects();
+    renderPersistedLog();
 
     if (proc) proc.style.display = 'none';
     if (result) result.style.display = 'block';
@@ -1312,9 +1315,9 @@ async function runEdit() {
     byId('resActions').innerHTML = isPreviewProject(proj)
       ? '<button type="button" class="btn btn-p" onclick="renderWork()">Continue</button>'
       : '<button type="button" class="btn btn-a" onclick="doApproveEdit()">Approve Edit</button><button type="button" class="btn btn-d" onclick="doRejectEdit()">Reject Edit</button>';
-    log(`Edit applied: ${response.summary}`, 'ok');
   } catch (error) {
     showErrorBox(errBox, error.message);
+    if (isPreviewProject(proj)) await refreshPreviewProjectState();
     log(`Edit error: ${error.message}`, 'er');
   } finally {
     busy = false;
@@ -1352,12 +1355,14 @@ async function shipPreviewToGitHub() {
     proj.branch = response.branch;
     proj.mainBranch = response.mainBranch;
     proj.shipped = response.shipped;
+    if (response.log) proj.log = response.log;
     projects[proj._index] = { ...proj };
     saveProjects();
-    log(`Saved preview to ${response.owner}/${response.repo} on ${response.branch}.`, 'ok');
+    renderPersistedLog();
     renderWork();
   } catch (error) {
     proj.shipError = error.message;
+    await refreshPreviewProjectState();
     projects[proj._index] = { ...proj };
     saveProjects();
     renderWork();
@@ -1371,7 +1376,7 @@ async function doApprove() {
   if (!confirm('Approve this build and merge it into the main branch?')) return;
   try {
     log('Approving build...', 'in');
-    await api('/api/approve', {
+    const response = await api('/api/approve', {
       owner: proj.owner,
       repo: proj.repo,
       branch: proj.branch,
@@ -1379,12 +1384,16 @@ async function doApprove() {
       sessionId: proj.sessionId || null
     });
     proj.deployed = true;
+    if (response.log) proj.log = response.log;
+    if (response.shipped) proj.shipped = response.shipped;
     if (proj.shipped) proj.shipped.approvedAt = new Date().toISOString();
     projects[proj._index] = { ...proj };
     saveProjects();
+    renderPersistedLog();
     log('Build approved. Give the deployment a moment to update.', 'ok');
     renderWork();
   } catch (error) {
+    if (isPreviewProject(proj)) await refreshPreviewProjectState();
     log(`Approve failed: ${error.message}`, 'er');
     alert(`Approve failed: ${error.message}`);
   }
@@ -1394,12 +1403,13 @@ async function doReject() {
   if (!proj || !proj.branch) return;
   if (!confirm('Discard this build branch?')) return;
   try {
-    await api('/api/reject', {
+    const response = await api('/api/reject', {
       owner: proj.owner,
       repo: proj.repo,
       branch: proj.branch,
       sessionId: proj.sessionId || null
     });
+    if (response.log) proj.log = response.log;
 
     if (isPreviewProject(proj)) {
       proj.branch = null;
@@ -1408,6 +1418,7 @@ async function doReject() {
       proj.shipError = '';
       projects[proj._index] = { ...proj };
       saveProjects();
+      renderPersistedLog();
       log('GitHub staging branch discarded. Preview session is still available for 24 hours.', 'in');
       renderWork();
       return;
@@ -1418,6 +1429,7 @@ async function doReject() {
     log('Build discarded.', 'in');
     toDash();
   } catch (error) {
+    if (isPreviewProject(proj)) await refreshPreviewProjectState();
     log(`Reject failed: ${error.message}`, 'er');
   }
 }
@@ -1459,9 +1471,52 @@ function isPreviewProject(project) {
   return Boolean(project?.storage === 'preview' || project?.sessionId);
 }
 
+async function refreshPreviewProjectState() {
+  if (!proj?.sessionId) return false;
+  try {
+    const status = await api('/api/preview/status', { sessionId: proj.sessionId });
+    proj.storage = 'preview';
+    proj.previewUrl = status.previewUrl;
+    proj.expiresAt = status.expiresAt;
+    proj.plan = status.plan;
+    proj.log = status.log;
+    proj.brief = status.brief;
+    proj.intake = status.intake || null;
+    proj.siteFiles = status.siteFiles || [];
+    proj.shipped = status.shipped || null;
+    proj.deployed = Boolean(status.deployed);
+    if (status.shipped) {
+      proj.owner = status.shipped.owner;
+      proj.repo = status.shipped.repo;
+      proj.branch = status.shipped.branch;
+      proj.mainBranch = status.shipped.mainBranch;
+    }
+    projects[proj._index] = { ...proj };
+    saveProjects();
+    renderPersistedLog();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function clearLog() {
   const container = byId('logE');
   if (container) container.innerHTML = '';
+}
+
+function renderPersistedLog() {
+  const container = byId('logE');
+  if (!container) return;
+
+  const events = Array.isArray(proj?.log?.events) ? proj.log.events : [];
+  container.innerHTML = events.map((event) => {
+    const state = event?.level === 'error' ? 'er' : event?.level === 'warn' ? 'in' : '';
+    return `<div class="le ${state}"><span class="t">[${formatLogTime(event?.timestamp)}]</span><span class="m">${esc(event?.message || event?.type || 'Log event')}</span></div>`;
+  }).join('');
+
+  const wrapper = byId('logP');
+  if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
 }
 
 function log(message, state = '') {
@@ -1471,6 +1526,12 @@ function log(message, state = '') {
   container.innerHTML += `<div class="le ${state}"><span class="t">[${time}]</span><span class="m">${esc(message)}</span></div>`;
   const wrapper = byId('logP');
   if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+}
+
+function formatLogTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 function renderPreviewMarkup(previewUrl, isLive = false) {

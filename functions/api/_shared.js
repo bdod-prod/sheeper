@@ -2,6 +2,7 @@ const GITHUB_API = 'https://api.github.com';
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
 const XAI_API = 'https://api.x.ai/v1/chat/completions';
+const MAX_LOG_EVENTS = 200;
 
 const DEFAULT_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
 const TASK_PROVIDER_ORDER = {
@@ -39,6 +40,55 @@ export function jsonResponse(data, status = 200, extraHeaders = {}) {
 
 export function errorResponse(message, status = 500) {
   return jsonResponse({ error: message }, status);
+}
+
+export function createLogEvent(type, message, {
+  level = 'info',
+  data = {}
+} = {}) {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    timestamp: new Date().toISOString(),
+    type,
+    level,
+    message,
+    data: sanitizeLogData(data)
+  };
+}
+
+export function appendLogEvents(log, events = []) {
+  const nextEvents = [
+    ...(Array.isArray(log?.events) ? log.events : []),
+    ...events.filter(Boolean)
+  ].slice(-MAX_LOG_EVENTS);
+
+  return {
+    ...(log || {}),
+    currentStep: Number.isFinite(Number(log?.currentStep)) ? Number(log.currentStep) : 0,
+    completedSteps: Array.isArray(log?.completedSteps) ? log.completedSteps : [],
+    totalFiles: Array.isArray(log?.totalFiles) ? log.totalFiles : [],
+    events: nextEvents,
+    lastUpdated: new Date().toISOString()
+  };
+}
+
+export function emitRuntimeLog(type, data = {}, level = 'info') {
+  const payload = JSON.stringify({
+    sheeper: true,
+    timestamp: new Date().toISOString(),
+    type,
+    ...sanitizeLogData(data)
+  });
+
+  if (level === 'error') {
+    console.error(payload);
+    return;
+  }
+  if (level === 'warn') {
+    console.warn(payload);
+    return;
+  }
+  console.log(payload);
 }
 
 export async function callAI(env, messages, {
@@ -286,11 +336,21 @@ export function extractJson(text) {
 
 export async function extractJsonWithRepair(env, text, {
   label = 'AI response',
-  schemaHint = 'Return a valid JSON object.'
+  schemaHint = 'Return a valid JSON object.',
+  captureMeta = null
 } = {}) {
   try {
+    if (captureMeta) {
+      captureMeta.parseStatus = 'clean';
+      captureMeta.rawPreview = previewText(text);
+    }
     return extractJson(text);
   } catch (initialError) {
+    if (captureMeta) {
+      captureMeta.parseStatus = 'repair_attempted';
+      captureMeta.initialError = initialError.message;
+      captureMeta.rawPreview = previewText(text);
+    }
     const repairPrompt = `The following output was supposed to be valid JSON for ${label}, but it failed to parse.
 
 Return ONLY valid JSON.
@@ -307,7 +367,7 @@ Malformed output:
 ${text}`;
 
     try {
-      const { text: repaired } = await callAI(env, [{
+      const { text: repaired, provider, model } = await callAI(env, [{
         role: 'user',
         content: repairPrompt
       }], {
@@ -315,11 +375,26 @@ ${text}`;
         task: 'json_repair'
       });
 
+      if (captureMeta) {
+        captureMeta.parseStatus = 'repaired';
+        captureMeta.repairProvider = provider;
+        captureMeta.repairModel = model;
+        captureMeta.repairedPreview = previewText(repaired);
+      }
       return extractJson(repaired);
-    } catch {
+    } catch (repairError) {
+      if (captureMeta) {
+        captureMeta.parseStatus = 'failed';
+        captureMeta.repairError = repairError.message;
+      }
       throw initialError;
     }
   }
+}
+
+export function previewText(value, maxLength = 600) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
 export async function githubGet(path, token) {
@@ -474,4 +549,21 @@ export async function githubGetTree(owner, repo, branch, token) {
   return tree.tree
     .filter((file) => file.type === 'blob')
     .map((file) => file.path);
+}
+
+function sanitizeLogData(value, depth = 0) {
+  if (depth > 3) return '[depth-limited]';
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return previewText(value, 1000);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 20).map((entry) => sanitizeLogData(entry, depth + 1));
+  if (value instanceof Error) return { name: value.name, message: value.message };
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 30)
+        .map(([key, entry]) => [key, sanitizeLogData(entry, depth + 1)])
+    );
+  }
+  return String(value);
 }

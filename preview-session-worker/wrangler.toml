@@ -14,3 +14,10 @@ new_sqlite_classes = ["PreviewSessionDO"]
 binding = "PREVIEW_ASSETS"
 bucket_name = "sheeper-preview-assets"
 preview_bucket_name = "sheeper-preview-assets"
+
+[observability]
+enabled = true
+
+[observability.logs]
+invocation_logs = true
+head_sampling_rate = 1

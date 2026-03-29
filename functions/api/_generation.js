@@ -33,14 +33,20 @@ export async function runStepGeneration(env, {
     userGuidance
   });
 
-  const { text, provider } = await callAI(env, prompt.messages, {
+  const { text, provider, model } = await callAI(env, prompt.messages, {
     system: prompt.system,
     maxTokens: 16000,
     task: 'step'
   });
 
+  const stepJsonMeta = {
+    task: 'step',
+    provider,
+    model
+  };
   const result = await extractJsonWithRepair(env, text, {
     label: `build step "${currentStep.name}"`,
+    captureMeta: stepJsonMeta,
     schemaHint: `{
   "summary": "what was built",
   "files": [
@@ -62,7 +68,11 @@ export async function runStepGeneration(env, {
     files: normalizeGeneratedFiles(result.files),
     notes: result.notes || '',
     uploadedAssets: uploaded.imageAssets,
-    provider
+    provider,
+    model,
+    diagnostics: {
+      stepJson: stepJsonMeta
+    }
   };
 }
 
@@ -77,7 +87,7 @@ export async function runEditGeneration(env, {
 }) {
   const uploaded = parseUploadedFiles(uploadedFiles);
 
-  const { text: planText } = await callAI(env, [{
+  const { text: planText, provider: selectProvider, model: selectModel } = await callAI(env, [{
     role: 'user',
     content: buildEditSelectPrompt({
       siteLabel,
@@ -88,10 +98,16 @@ export async function runEditGeneration(env, {
     })
   }], { maxTokens: 2000, task: 'edit_select' });
 
+  const editSelectJsonMeta = {
+    task: 'edit_select',
+    provider: selectProvider,
+    model: selectModel
+  };
   let filesToRead = [];
   try {
     filesToRead = (await extractJsonWithRepair(env, planText, {
       label: 'edit file-selection response',
+      captureMeta: editSelectJsonMeta,
       schemaHint: `{ "files_to_read": ["path/file.html"], "reasoning": "why" }`
     })).files_to_read || [];
   } catch {}
@@ -103,7 +119,7 @@ export async function runEditGeneration(env, {
     }
   }
 
-  const { text: changeText, provider } = await callAI(env, [{
+  const { text: changeText, provider, model } = await callAI(env, [{
     role: 'user',
     content: buildEditPrompt({
       siteFiles,
@@ -114,8 +130,14 @@ export async function runEditGeneration(env, {
     })
   }], { maxTokens: 16000, task: 'edit' });
 
+  const editJsonMeta = {
+    task: 'edit',
+    provider,
+    model
+  };
   const changes = await extractJsonWithRepair(env, changeText, {
     label: 'edit response',
+    captureMeta: editJsonMeta,
     schemaHint: `{
   "summary": "what changed",
   "files": [
@@ -135,7 +157,12 @@ export async function runEditGeneration(env, {
     summary: changes.summary || 'Changes applied.',
     files: normalizeGeneratedFiles(changes.files),
     uploadedAssets: uploaded.imageAssets,
-    provider
+    provider,
+    model,
+    diagnostics: {
+      editSelectJson: editSelectJsonMeta,
+      editJson: editJsonMeta
+    }
   };
 }
 

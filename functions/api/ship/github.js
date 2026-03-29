@@ -1,10 +1,13 @@
 import {
+  appendLogEvents,
   checkAuth,
-  jsonResponse,
+  createLogEvent,
+  emitRuntimeLog,
   errorResponse,
   githubCommitFiles,
   githubGet,
-  githubPost
+  githubPost,
+  jsonResponse
 } from '../_shared.js';
 import {
   getPreviewSession,
@@ -15,6 +18,8 @@ import {
 
 export async function onRequestPost(context) {
   const { request, env } = context;
+  let session = null;
+  let startedLog = null;
 
   if (!checkAuth(request, env)) {
     return errorResponse('Unauthorized', 401);
@@ -28,7 +33,7 @@ export async function onRequestPost(context) {
       return errorResponse('sessionId, owner, and repo are required', 400);
     }
 
-    const session = await getPreviewSession(env, request.url, sessionId);
+    session = await getPreviewSession(env, request.url, sessionId);
     if (session.shipped?.branch) {
       return jsonResponse({
         shipped: session.shipped,
@@ -46,6 +51,20 @@ export async function onRequestPost(context) {
     if (!snapshot.length) {
       return errorResponse('This preview has no generated files yet. Build at least one step before shipping to GitHub.', 400);
     }
+
+    startedLog = appendLogEvents(session.log || {}, [
+      createLogEvent('ship.started', `Saving preview to ${owner}/${repo}.`, {
+        data: {
+          owner,
+          repo,
+          fileCount: snapshot.length
+        }
+      })
+    ]);
+
+    session = await updatePreviewSession(env, request.url, session.sessionId, {
+      log: startedLog
+    });
 
     const token = env.GITHUB_TOKEN;
     const { mainBranch, mainSha } = await resolveMainBranch(owner, repo, token);
@@ -91,8 +110,30 @@ export async function onRequestPost(context) {
       shippedAt: new Date().toISOString()
     };
 
+    const updatedLog = appendLogEvents(startedLog, [
+      createLogEvent('ship.completed', `Preview saved to ${owner}/${repo} on ${branch}.`, {
+        data: {
+          owner,
+          repo,
+          branch,
+          mainBranch,
+          fileCount: snapshot.length
+        }
+      })
+    ]);
+
     const updatedSession = await updatePreviewSession(env, request.url, session.sessionId, {
-      shipped
+      shipped,
+      log: updatedLog
+    });
+
+    emitRuntimeLog('preview.ship.completed', {
+      sessionId: updatedSession.sessionId,
+      owner,
+      repo,
+      branch,
+      mainBranch,
+      fileCount: snapshot.length
     });
 
     return jsonResponse({
@@ -101,11 +142,31 @@ export async function onRequestPost(context) {
       branch,
       mainBranch,
       shipped,
+      log: updatedSession.log,
       message: `Saved preview to ${owner}/${repo} on ${branch}. Review it, then approve or discard the branch.`
     }, 200, {
       'Set-Cookie': previewCookieHeader(request.url, updatedSession.sessionId, updatedSession.previewSecret)
     });
   } catch (err) {
+    emitRuntimeLog('preview.ship.failed', {
+      sessionId: session?.sessionId,
+      error: err.message
+    }, 'error');
+    if (session?.sessionId) {
+      try {
+        const failedLog = appendLogEvents(startedLog || session.log || {}, [
+          createLogEvent('ship.failed', 'Saving preview to GitHub failed.', {
+            level: 'error',
+            data: { error: err.message }
+          })
+        ]);
+        await updatePreviewSession(env, request.url, session.sessionId, {
+          log: failedLog
+        });
+      } catch (logErr) {
+        console.warn('Ship failure logging failed:', logErr.message);
+      }
+    }
     console.error('Ship to GitHub error:', err);
     return errorResponse(err.message || 'Failed to save preview to GitHub', 500);
   }
