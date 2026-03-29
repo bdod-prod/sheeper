@@ -3,6 +3,8 @@ const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
 const XAI_API = 'https://api.x.ai/v1/chat/completions';
 const MAX_LOG_EVENTS = 200;
+const AUTH_COOKIE_NAME = 'sheeper_auth';
+const AUTH_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 const DEFAULT_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
 const TASK_PROVIDER_ORDER = {
@@ -23,8 +25,13 @@ const DEFAULT_AI_MODELS = {
 
 export function checkAuth(request, env) {
   const authHeader = request.headers.get('Authorization') || '';
-  const token = authHeader.replace('Bearer ', '');
-  return Boolean(token && token === env.SHEEPER_TOKEN);
+  const headerToken = authHeader.replace('Bearer ', '').trim();
+  if (headerToken && headerToken === env.SHEEPER_TOKEN) {
+    return true;
+  }
+
+  const cookieToken = parseCookies(request.headers.get('Cookie') || '')[AUTH_COOKIE_NAME];
+  return Boolean(cookieToken && cookieToken === env.SHEEPER_TOKEN);
 }
 
 export function jsonResponse(data, status = 200, extraHeaders = {}) {
@@ -40,6 +47,18 @@ export function jsonResponse(data, status = 200, extraHeaders = {}) {
 
 export function errorResponse(message, status = 500) {
   return jsonResponse({ error: message }, status);
+}
+
+export function authCookieHeader(requestUrl, token) {
+  const url = new URL(requestUrl);
+  const secure = url.protocol === 'https:' ? '; Secure' : '';
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${AUTH_TTL_SECONDS}; HttpOnly; SameSite=Lax${secure}`;
+}
+
+export function clearAuthCookieHeader(requestUrl) {
+  const url = new URL(requestUrl);
+  const secure = url.protocol === 'https:' ? '; Secure' : '';
+  return `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export function createLogEvent(type, message, {
@@ -566,4 +585,19 @@ function sanitizeLogData(value, depth = 0) {
     );
   }
   return String(value);
+}
+
+function parseCookies(rawCookie) {
+  return String(rawCookie || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((accumulator, part) => {
+      const index = part.indexOf('=');
+      if (index === -1) return accumulator;
+      const key = part.slice(0, index).trim();
+      const value = decodeURIComponent(part.slice(index + 1).trim());
+      accumulator[key] = value;
+      return accumulator;
+    }, {});
 }

@@ -35,7 +35,7 @@ let busy = false;
 
 initApp();
 
-function initApp() {
+async function initApp() {
   const tokenInput = byId('tokIn');
   if (tokenInput) {
     tokenInput.addEventListener('keydown', handleAuthKeydown);
@@ -43,6 +43,7 @@ function initApp() {
   }
   bindStarterInputs();
   renderDashboard();
+  await bootstrapAuth();
 }
 
 async function handleAuthKeydown(event) {
@@ -52,11 +53,12 @@ async function handleAuthKeydown(event) {
   try {
     const response = await fetch('/api/auth', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token })
     });
     if (!response.ok) throw new Error('Invalid token');
-    authToken = token;
+    authToken = '';
     event.target.value = '';
     setAuthError('');
     show('dashV');
@@ -64,6 +66,25 @@ async function handleAuthKeydown(event) {
   } catch {
     setAuthError('Invalid token. Try again.');
     event.target.value = '';
+  }
+}
+
+async function bootstrapAuth() {
+  try {
+    const response = await fetch('/api/auth', {
+      method: 'GET',
+      credentials: 'same-origin'
+    });
+    if (!response.ok) {
+      show('authV');
+      return;
+    }
+    authToken = '';
+    setAuthError('');
+    show('dashV');
+    renderDashboard();
+  } catch {
+    show('authV');
   }
 }
 
@@ -212,13 +233,17 @@ function setMode(nextMode) {
 }
 
 async function api(path, data) {
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${authToken}`
-    },
+    headers,
     body: JSON.stringify(data)
   });
   const raw = await response.text();
