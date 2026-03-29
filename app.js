@@ -68,7 +68,7 @@ async function handleAuthKeydown(event) {
 }
 
 function bindStarterInputs() {
-  ['starterOwner', 'starterRepo', 'starterDomain', 'starterLanguage', 'starterTemplateRepo'].forEach((id) => {
+  ['starterDomain', 'starterLanguage', 'starterTemplateRepo'].forEach((id) => {
     const element = byId(id);
     if (!element) return;
     element.addEventListener('input', () => {
@@ -129,8 +129,6 @@ function setValue(id, value) { const element = byId(id); if (element) element.va
 
 function defaultStarterDraft() {
   return {
-    owner: '',
-    repo: '',
     composer: '',
     history: [],
     compiledBrief: null,
@@ -216,6 +214,7 @@ function setMode(nextMode) {
 async function api(path, data) {
   const response = await fetch(path, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${authToken}`
@@ -236,8 +235,6 @@ async function api(path, data) {
 }
 
 function syncStarterFromInputs() {
-  starterDraft.owner = valueOf('starterOwner');
-  starterDraft.repo = valueOf('starterRepo');
   starterDraft.composer = valueOf('starterComposer');
   starterDraft.advanced = {
     domain: valueOf('starterDomain'),
@@ -259,8 +256,6 @@ function syncStarterFromInputs() {
 }
 
 function applyStarterDraftToInputs() {
-  setValue('starterOwner', starterDraft.owner);
-  setValue('starterRepo', starterDraft.repo);
   setValue('starterComposer', starterDraft.composer);
   setValue('starterDomain', starterDraft.advanced.domain);
   setValue('starterLanguage', starterDraft.advanced.language || 'en');
@@ -533,11 +528,11 @@ function renderBriefCard(brief) {
         <div class="brief-block"><span class="label">Assumptions</span><div class="assumption-list">${renderChipList(brief.assumptions, 'No major assumptions')}</div></div>
       </div>
       <div class="brief-actions">
-        <div class="helper-copy">Review this brief before branch creation. Build starts only when you click Build now.</div>
+        <div class="helper-copy">Review this brief before preview creation. SHEEPER only starts building when you click Build Preview.</div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
           <button type="button" class="btn btn-g" onclick="reopenBriefConversation()" ${busy ? 'disabled' : ''}>Add Detail</button>
           <button type="button" class="btn btn-g" onclick="resetStarterFlow(false)" ${busy ? 'disabled' : ''}>Start Over</button>
-          <button type="button" class="btn btn-p" onclick="buildStarterProject()" ${busy ? 'disabled' : ''}>Build Now</button>
+          <button type="button" class="btn btn-p" onclick="buildStarterProject()" ${busy ? 'disabled' : ''}>Build Preview</button>
         </div>
       </div>
     </div>
@@ -565,7 +560,7 @@ function starterMetaText() {
     return `Add the detail you want changed and SHEEPER will refresh the brief before building.${sourceHint}`;
   }
   if (starterDraft.status === 'ready' && starterDraft.compiledBrief) {
-    return `Brief ready. Review it, build now, or add detail if you want to tune it first.${sourceHint}`;
+    return `Brief ready. Review it, build the preview, or add detail if you want to tune it first.${sourceHint}`;
   }
   if (starterDraft.status === 'clarify') {
     const topics = starterDraft.missingTopics.length ? ` Open questions: ${starterDraft.missingTopics.join(', ')}.` : '';
@@ -587,7 +582,7 @@ function starterSendButtonLabel() {
 function starterHasWork() {
   return Boolean(
     starterDraft.history.length || starterDraft.composer || starterDraft.compiledBrief || starterDraft.summary ||
-    starterDraft.owner || starterDraft.repo || starterDraft.advanced.domain || starterDraft.advanced.templateRepo ||
+    starterDraft.advanced.domain || starterDraft.advanced.templateRepo ||
     hasStarterSourceMaterial()
   );
 }
@@ -596,11 +591,6 @@ async function submitStarterMessage() {
   if (busy) return;
   syncStarterFromInputs();
   setStarterError('');
-
-  if (!starterDraft.owner || !starterDraft.repo) {
-    setStarterError('Set the target GitHub owner and repo first so SHEEPER knows where this build will land.');
-    return;
-  }
 
   let message = starterDraft.composer.trim();
   if (!message && hasStarterSourceMaterial()) {
@@ -622,8 +612,6 @@ async function submitStarterMessage() {
 
   try {
     const result = await api('/api/intake', {
-      owner: starterDraft.owner,
-      repo: starterDraft.repo,
       history: starterDraft.history,
       turns: starterDraft.turns,
       advanced: starterDraft.advanced,
@@ -665,8 +653,6 @@ function reopenBriefConversation() {
 function resetStarterFlow(preserveTarget = true) {
   syncStarterFromInputs();
   const preserved = preserveTarget ? {
-    owner: starterDraft.owner,
-    repo: starterDraft.repo,
     advanced: { ...starterDraft.advanced },
     advancedOpen: starterDraft.advancedOpen,
     sourceMaterial: normalizeStarterSourceMaterial(starterDraft.sourceMaterial)
@@ -674,8 +660,6 @@ function resetStarterFlow(preserveTarget = true) {
 
   starterDraft = defaultStarterDraft();
   if (preserved) {
-    starterDraft.owner = preserved.owner;
-    starterDraft.repo = preserved.repo;
     starterDraft.advanced = preserved.advanced;
     starterDraft.advancedOpen = preserved.advancedOpen;
     starterDraft.sourceMaterial = preserved.sourceMaterial;
@@ -691,10 +675,6 @@ async function buildStarterProject() {
   syncStarterFromInputs();
   setStarterError('');
 
-  if (!starterDraft.owner || !starterDraft.repo) {
-    setStarterError('Set the target GitHub owner and repo before building.');
-    return;
-  }
   if (!starterDraft.compiledBrief) {
     setStarterError('Generate and review the brief first, then build.');
     return;
@@ -704,9 +684,7 @@ async function buildStarterProject() {
   renderStarter();
 
   try {
-    const result = await api('/api/init', {
-      owner: starterDraft.owner,
-      repo: starterDraft.repo,
+    const result = await api('/api/preview/start', {
       brief: starterDraft.compiledBrief,
       intake: {
         history: starterDraft.history,
@@ -720,15 +698,17 @@ async function buildStarterProject() {
     });
 
     projects.unshift({
-      name: result.brief?.name || starterDraft.compiledBrief.name || starterDraft.repo,
-      owner: starterDraft.owner,
-      repo: starterDraft.repo,
-      branch: result.branch,
-      mainBranch: result.mainBranch,
+      storage: 'preview',
+      sessionId: result.sessionId,
+      name: result.brief?.name || starterDraft.compiledBrief.name || 'Preview session',
+      previewUrl: result.previewUrl,
+      expiresAt: result.expiresAt,
       plan: result.plan,
       log: result.log,
       brief: result.brief,
       intake: result.intake || null,
+      siteFiles: [],
+      shipped: null,
       deployed: false
     });
     saveProjects();
@@ -748,22 +728,31 @@ function renderProjects() {
   const container = byId('pList');
   if (!container) return;
   if (!projects.length) {
-    container.innerHTML = '<div class="empty-projects">No active builds yet. Start with a plain-language brief and SHEEPER will create the branch when you click Build now.</div>';
+    container.innerHTML = '<div class="empty-projects">No active previews yet. Start with a plain-language brief and SHEEPER will build a protected preview before you decide whether to save it anywhere.</div>';
     return;
   }
 
   container.innerHTML = projects.map((project, index) => {
-    const status = project.deployed ? 'DEPLOYED' : project.branch ? 'IN PROGRESS' : 'NEW';
+    const status = project.deployed
+      ? 'DEPLOYED'
+      : project.branch
+        ? 'READY TO MERGE'
+        : project.storage === 'preview'
+          ? 'PREVIEW'
+          : 'NEW';
+    const meta = project.storage === 'preview'
+      ? previewProjectMeta(project)
+      : `${project.owner}/${project.repo}${project.branch ? ` -> ${project.branch}` : ''}`;
     return `
       <div class="pc">
         <div>
-          <div class="pc-title">${esc(project.name || `${project.owner}/${project.repo}`)}</div>
-          <div class="pc-meta">${esc(project.owner)}/${esc(project.repo)}${project.branch ? ` -> ${esc(project.branch)}` : ''}</div>
+          <div class="pc-title">${esc(projectDisplayName(project))}</div>
+          <div class="pc-meta">${esc(meta)}</div>
         </div>
         <div class="pc-a">
           <span class="chip">${esc(status)}</span>
           <button type="button" class="btn btn-p btn-s" data-open-project-index="${index}">Open</button>
-          <button type="button" class="btn btn-g btn-s" data-remove-project-index="${index}" aria-label="Remove ${esc(project.name || project.repo)} from the dashboard">Remove</button>
+          <button type="button" class="btn btn-g btn-s" data-remove-project-index="${index}" aria-label="Remove ${esc(projectDisplayName(project))} from the dashboard">Remove</button>
         </div>
       </div>
     `;
@@ -777,8 +766,20 @@ function renderProjects() {
   });
 }
 
+function projectDisplayName(project) {
+  return project.name || (project.owner && project.repo ? `${project.owner}/${project.repo}` : 'Preview session');
+}
+
+function previewProjectMeta(project) {
+  const pieces = [];
+  if (project.sessionId) pieces.push(`session ${project.sessionId.slice(0, 8)}`);
+  if (project.expiresAt) pieces.push(`expires ${new Date(project.expiresAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`);
+  if (project.shipped?.owner && project.shipped?.repo) pieces.push(`saved to ${project.shipped.owner}/${project.shipped.repo}`);
+  return pieces.join(' | ');
+}
+
 function removeProject(index) {
-  if (!confirm('Remove this project from the dashboard? The repo and branch stay untouched.')) return;
+  if (!confirm('Remove this project from the dashboard? Preview sessions and shipped branches stay untouched.')) return;
   projects.splice(index, 1);
   saveProjects();
   renderProjects();
@@ -787,12 +788,44 @@ function removeProject(index) {
 async function openProj(index) {
   proj = { ...projects[index], _index: index };
   mode = 'build';
-  byId('hName').textContent = proj.name || `${proj.owner}/${proj.repo}`;
+  byId('hName').textContent = projectDisplayName(proj);
   show('workV');
   clearLog();
   log('Loading project...', 'in');
 
-  if (proj.branch && !proj.plan) {
+  if (proj.storage === 'preview' || proj.sessionId) {
+    try {
+      const status = await api('/api/preview/status', { sessionId: proj.sessionId });
+      proj.storage = 'preview';
+      proj.previewUrl = status.previewUrl;
+      proj.expiresAt = status.expiresAt;
+      proj.plan = status.plan;
+      proj.log = status.log;
+      proj.brief = status.brief;
+      proj.intake = status.intake || null;
+      proj.siteFiles = status.siteFiles || [];
+      proj.shipped = status.shipped || null;
+      proj.deployed = Boolean(status.deployed);
+      if (status.shipped) {
+        proj.owner = status.shipped.owner;
+        proj.repo = status.shipped.repo;
+        proj.branch = status.shipped.branch;
+        proj.mainBranch = status.shipped.mainBranch;
+      }
+      projects[proj._index] = { ...proj };
+      saveProjects();
+      log('Preview session resumed.', 'ok');
+    } catch (error) {
+      if (/expired/i.test(error.message)) {
+        projects.splice(index, 1);
+        saveProjects();
+        setStarterError('That preview session expired. Start a new one and SHEEPER will rebuild quickly.');
+        toDash();
+        return;
+      }
+      log(`Failed to load: ${error.message}`, 'er');
+    }
+  } else if (proj.branch && !proj.plan) {
     try {
       const status = await api('/api/status', { owner: proj.owner, repo: proj.repo, branch: proj.branch });
       proj.plan = status.plan;
@@ -856,14 +889,29 @@ function renderWork() {
 
   const currentStep = proj.log?.currentStep || 0;
   const totalSteps = proj.plan.steps.length;
+  const previewPanel = isPreviewProject(proj) ? renderLivePreviewPanel(proj) : '';
+
   if (currentStep >= totalSteps) {
+    if (isPreviewProject(proj)) {
+      container.innerHTML = `
+        ${previewPanel}
+        <div class="ob">
+          <div class="ot">Build Complete</div>
+          <div style="font-size:1.05rem;font-weight:600;color:var(--bright);margin-bottom:0.45rem;">The preview is ready.</div>
+          <div class="helper-copy" style="margin-bottom:1rem;">Edit it further if you want, or save this exact state to GitHub on a staging branch.</div>
+          ${renderShipPanel(proj)}
+        </div>
+      `;
+      return;
+    }
+
     const branchSlug = (proj.branch || '').replace(/\//g, '-');
     const previewUrl = `https://${branchSlug}.${proj.repo}.pages.dev`;
     container.innerHTML = `
       <div style="text-align:center;padding:3rem 2rem;">
         <div style="font-size:1.5rem;font-weight:700;color:var(--acc);margin-bottom:0.5rem;">Build complete</div>
         <div class="helper-copy" style="margin-bottom:1.5rem;">All ${totalSteps} steps are done. You can approve this build or discard it.</div>
-        ${renderPreviewMarkup(previewUrl)}
+        ${renderPreviewMarkup(previewUrl, false)}
         <div style="margin-top:2rem;display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
           <button type="button" class="btn btn-a" onclick="doApprove()">Approve Build</button>
           <button type="button" class="btn btn-d" onclick="doReject()">Discard Build</button>
@@ -875,6 +923,8 @@ function renderWork() {
 
   const step = proj.plan.steps[currentStep];
   container.innerHTML = `
+    ${previewPanel}
+    ${isPreviewProject(proj) ? renderShipPanel(proj) : ''}
     <div>
       <div style="font-size:1.125rem;font-weight:600;color:var(--bright);">Step ${currentStep + 1} of ${totalSteps}: ${esc(step.name)}</div>
       <div class="helper-copy" style="margin-top:0.35rem;">${esc(step.description || '')}</div>
@@ -915,10 +965,25 @@ function renderWork() {
 }
 
 function renderEditMode(container) {
+  if (isPreviewProject(proj) && proj.shipped?.branch) {
+    container.innerHTML = `
+      ${renderLivePreviewPanel(proj)}
+      <div class="ob">
+        <div class="ot">GitHub Review</div>
+        <div style="font-size:1.05rem;font-weight:600;color:var(--bright);margin-bottom:0.45rem;">This preview is now saved on a staging branch.</div>
+        <div class="helper-copy" style="margin-bottom:1rem;">For the alpha, preview editing pauses once you save to GitHub. Review the branch and either merge it or discard it.</div>
+        ${renderShipPanel(proj)}
+      </div>
+    `;
+    return;
+  }
+
   container.innerHTML = `
+    ${isPreviewProject(proj) ? renderLivePreviewPanel(proj) : ''}
+    ${isPreviewProject(proj) ? renderShipPanel(proj) : ''}
     <div>
       <div style="font-size:1.125rem;font-weight:600;color:var(--bright);">Edit Mode</div>
-      <div class="helper-copy" style="margin-top:0.35rem;">Make one targeted change to ${esc(proj?.name || 'your site')}.</div>
+      <div class="helper-copy" style="margin-top:0.35rem;">Make one targeted change to ${esc(projectDisplayName(proj))}.</div>
     </div>
     <div>
       <div class="fl" style="margin-bottom:0.38rem;">What should change?</div>
@@ -947,72 +1012,90 @@ function renderEditMode(container) {
   setupDropZone();
 }
 
-function setupDropZone() {
-  uploads = [];
-  const dropZone = byId('dz');
-  const fileInput = byId('fIn');
-  if (!dropZone || !fileInput) return;
-
-  dropZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    dropZone.classList.add('over');
-  });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
-  dropZone.addEventListener('drop', (event) => {
-    event.preventDefault();
-    dropZone.classList.remove('over');
-    addFiles(event.dataTransfer.files);
-  });
-  fileInput.addEventListener('change', () => {
-    addFiles(fileInput.files);
-    fileInput.value = '';
-  });
+function renderLivePreviewPanel(project) {
+  if (!project.previewUrl) return '';
+  return `
+    <div class="ob">
+      <div class="ot">Protected Live Preview</div>
+      <div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:1.05rem;font-weight:600;color:var(--bright);margin-bottom:0.35rem;">Preview-first workspace</div>
+          <div class="helper-copy">This preview is protected to the current browser session. ${project.expiresAt ? `It will stay resumable until ${esc(new Date(project.expiresAt).toLocaleString('en-GB'))}.` : ''}</div>
+        </div>
+        <a href="${esc(project.previewUrl)}" target="_blank" rel="noopener noreferrer" class="pl">Open Live Preview</a>
+      </div>
+      <div style="margin-top:1rem;border:1px solid var(--bdr);border-radius:8px;overflow:hidden;background:#0b0b0d;">
+        <iframe src="${esc(project.previewUrl)}" title="Live preview" style="display:block;width:100%;height:380px;border:none;background:#fff;"></iframe>
+      </div>
+    </div>
+  `;
 }
 
-function addFiles(fileList) {
-  for (const file of fileList) {
-    if (!uploads.find((upload) => upload.name === file.name)) uploads.push(file);
+function renderShipPanel(project) {
+  if (!isPreviewProject(project)) return '';
+
+  if (project.shipped?.branch) {
+    return `
+      <div class="ob">
+        <div class="ot">Saved To GitHub</div>
+        <div style="font-size:1rem;font-weight:600;color:var(--bright);margin-bottom:0.35rem;">${esc(project.shipped.owner)}/${esc(project.shipped.repo)}</div>
+        <div class="helper-copy" style="margin-bottom:1rem;">Preview snapshot saved on ${esc(project.shipped.branch)}. Approve to merge it into ${esc(project.shipped.mainBranch || 'main')} or discard the branch.</div>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+          <button type="button" class="btn btn-a" onclick="doApprove()">Approve And Merge</button>
+          <button type="button" class="btn btn-d" onclick="doReject()">Discard Branch</button>
+        </div>
+      </div>
+    `;
   }
-  renderFiles();
-}
 
-function removeFileAt(index) {
-  uploads.splice(index, 1);
-  renderFiles();
-}
-
-function renderFiles() {
-  const container = byId('fList');
-  if (!container) return;
-  container.innerHTML = uploads.map((file, index) => `
-    <div class="fci"><span>${esc(file.name)}</span><button type="button" data-upload-index="${index}" aria-label="Remove ${esc(file.name)}">x</button></div>
-  `).join('');
-  container.querySelectorAll('[data-upload-index]').forEach((button) => {
-    button.addEventListener('click', () => removeFileAt(Number(button.dataset.uploadIndex)));
-  });
-}
-
-function toBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-async function prepareUploads() {
-  const prepared = [];
-  for (const file of uploads) {
-    prepared.push({ name: file.name, type: file.type, data: await toBase64(file) });
+  if (!(project.siteFiles?.length || (project.log?.completedSteps || []).length)) {
+    return `
+      <div class="ob">
+        <div class="ot">Save To GitHub</div>
+        <div class="helper-copy">Run the first build step to create a real preview. GitHub only enters the picture once there is something worth saving.</div>
+      </div>
+    `;
   }
-  return prepared;
+
+  return `
+    <div class="ob">
+      <div class="ot">Save To GitHub</div>
+      <div class="helper-copy" style="margin-bottom:1rem;">When you like the preview, save this exact state to an existing repo on a SHEEPER staging branch.</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.75rem;">
+        <div class="fg">
+          <label class="fl" for="shipOwner">GitHub Owner</label>
+          <input type="text" id="shipOwner" class="input" placeholder="bdod-prod" value="${esc(project.shipOwner || project.owner || '')}" oninput="cacheShipDraft()" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="fg">
+          <label class="fl" for="shipRepo">Repository</label>
+          <input type="text" id="shipRepo" class="input" placeholder="sheeper-sandbox" value="${esc(project.shipRepo || project.repo || '')}" oninput="cacheShipDraft()" spellcheck="false" autocomplete="off">
+        </div>
+      </div>
+      <div id="shipErr" class="eb${project.shipError ? ' on' : ''}" role="alert" aria-live="assertive" style="margin-top:0.9rem;">${esc(project.shipError || '')}</div>
+      <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+        <button type="button" class="btn btn-p" onclick="shipPreviewToGitHub()" ${busy ? 'disabled' : ''}>Save Preview To GitHub</button>
+      </div>
+    </div>
+  `;
+}
+
+function cacheShipDraft() {
+  if (!proj) return;
+  proj.shipOwner = valueOf('shipOwner');
+  proj.shipRepo = valueOf('shipRepo');
+  proj.shipError = '';
+  projects[proj._index] = { ...proj };
+  saveProjects();
 }
 
 async function runStep() {
   if (busy || !proj) return;
-  busy = true;
+  if (isPreviewProject(proj) && proj.shipped?.branch) {
+    alert('This preview is already saved to GitHub. For alpha, review the staging branch instead of continuing to build here.');
+    return;
+  }
 
+  busy = true;
   const button = byId('runBtn');
   if (button) button.disabled = true;
   const proc = byId('proc');
@@ -1038,16 +1121,26 @@ async function runStep() {
     const guidance = valueOf('guidance');
     addLine('Generating files with AI...');
 
-    const response = await api('/api/step', {
-      owner: proj.owner,
-      repo: proj.repo,
-      branch: proj.branch,
-      stepIndex: proj.log?.currentStep || 0,
-      userGuidance: guidance,
-      files
-    });
+    const response = isPreviewProject(proj)
+      ? await api('/api/preview/step', {
+          sessionId: proj.sessionId,
+          stepIndex: proj.log?.currentStep || 0,
+          userGuidance: guidance,
+          files
+        })
+      : await api('/api/step', {
+          owner: proj.owner,
+          repo: proj.repo,
+          branch: proj.branch,
+          stepIndex: proj.log?.currentStep || 0,
+          userGuidance: guidance,
+          files
+        });
 
     proj.log = response.log;
+    if (response.previewUrl) proj.previewUrl = response.previewUrl;
+    if (response.expiresAt) proj.expiresAt = response.expiresAt;
+    if (response.siteFiles) proj.siteFiles = response.siteFiles;
     projects[proj._index] = { ...proj };
     saveProjects();
 
@@ -1057,8 +1150,8 @@ async function runStep() {
     byId('resFiles').innerHTML = (response.files || []).map((file) => `
       <div class="of"><span class="a ${file.action === 'created' ? 'cr' : 'md'}">${esc(file.action)}</span><span>${esc(file.path)}</span></div>
     `).join('');
-    byId('resPreview').innerHTML = renderPreviewMarkup(response.previewUrl);
-    byId('resActions').innerHTML = response.isLastStep
+    byId('resPreview').innerHTML = renderPreviewMarkup(response.previewUrl, isPreviewProject(proj));
+    byId('resActions').innerHTML = response.isLastStep && !isPreviewProject(proj)
       ? '<button type="button" class="btn btn-a" onclick="doApprove()">Approve Build</button><button type="button" class="btn btn-d" onclick="doReject()">Discard Build</button>'
       : '<button type="button" class="btn btn-p" onclick="renderWork()">Continue</button>';
 
@@ -1077,8 +1170,12 @@ async function runStep() {
 
 async function runEdit() {
   if (busy || !proj) return;
-  busy = true;
+  if (isPreviewProject(proj) && proj.shipped?.branch) {
+    alert('This preview is already saved to GitHub. For alpha, review the staging branch instead of editing the preview further.');
+    return;
+  }
 
+  busy = true;
   const button = byId('editBtn');
   if (button) button.disabled = true;
   const request = valueOf('editReq');
@@ -1101,23 +1198,40 @@ async function runEdit() {
   try {
     log('Submitting edit...', 'in');
     const files = await prepareUploads();
-    const response = await api('/api/edit', {
-      owner: proj.owner,
-      repo: proj.repo,
-      branch: proj.mainBranch || 'main',
-      userRequest: request,
-      files
-    });
+    const response = isPreviewProject(proj)
+      ? await api('/api/preview/edit', {
+          sessionId: proj.sessionId,
+          userRequest: request,
+          files
+        })
+      : await api('/api/edit', {
+          owner: proj.owner,
+          repo: proj.repo,
+          branch: proj.mainBranch || 'main',
+          userRequest: request,
+          files
+        });
 
-    proj._editBranch = response.branch;
+    if (!isPreviewProject(proj)) {
+      proj._editBranch = response.branch;
+    }
+    if (response.previewUrl) proj.previewUrl = response.previewUrl;
+    if (response.expiresAt) proj.expiresAt = response.expiresAt;
+    if (response.siteFiles) proj.siteFiles = response.siteFiles;
+    if (response.log) proj.log = response.log;
+    projects[proj._index] = { ...proj };
+    saveProjects();
+
     if (proc) proc.style.display = 'none';
     if (result) result.style.display = 'block';
     byId('resSummary').textContent = response.summary;
     byId('resFiles').innerHTML = (response.files || []).map((file) => `
       <div class="of"><span class="a ${file.action === 'created' ? 'cr' : 'md'}">${esc(file.action)}</span><span>${esc(file.path)}</span></div>
     `).join('');
-    byId('resPreview').innerHTML = renderPreviewMarkup(response.previewUrl);
-    byId('resActions').innerHTML = '<button type="button" class="btn btn-a" onclick="doApproveEdit()">Approve Edit</button><button type="button" class="btn btn-d" onclick="doRejectEdit()">Reject Edit</button>';
+    byId('resPreview').innerHTML = renderPreviewMarkup(response.previewUrl, isPreviewProject(proj));
+    byId('resActions').innerHTML = isPreviewProject(proj)
+      ? '<button type="button" class="btn btn-p" onclick="renderWork()">Continue</button>'
+      : '<button type="button" class="btn btn-a" onclick="doApproveEdit()">Approve Edit</button><button type="button" class="btn btn-d" onclick="doRejectEdit()">Reject Edit</button>';
     log(`Edit applied: ${response.summary}`, 'ok');
   } catch (error) {
     showErrorBox(errBox, error.message);
@@ -1127,8 +1241,53 @@ async function runEdit() {
     if (button) button.disabled = false;
   }
 }
+
+async function shipPreviewToGitHub() {
+  if (!proj || !isPreviewProject(proj) || busy) return;
+
+  cacheShipDraft();
+  if (!proj.shipOwner || !proj.shipRepo) {
+    proj.shipError = 'Set the target GitHub owner and repo before saving the preview.';
+    projects[proj._index] = { ...proj };
+    saveProjects();
+    renderWork();
+    return;
+  }
+
+  busy = true;
+  proj.shipError = '';
+  projects[proj._index] = { ...proj };
+  saveProjects();
+  renderWork();
+
+  try {
+    const response = await api('/api/ship/github', {
+      sessionId: proj.sessionId,
+      owner: proj.shipOwner,
+      repo: proj.shipRepo
+    });
+
+    proj.owner = response.owner;
+    proj.repo = response.repo;
+    proj.branch = response.branch;
+    proj.mainBranch = response.mainBranch;
+    proj.shipped = response.shipped;
+    projects[proj._index] = { ...proj };
+    saveProjects();
+    log(`Saved preview to ${response.owner}/${response.repo} on ${response.branch}.`, 'ok');
+    renderWork();
+  } catch (error) {
+    proj.shipError = error.message;
+    projects[proj._index] = { ...proj };
+    saveProjects();
+    renderWork();
+  } finally {
+    busy = false;
+  }
+}
+
 async function doApprove() {
-  if (!proj) return;
+  if (!proj || !proj.branch) return;
   if (!confirm('Approve this build and merge it into the main branch?')) return;
   try {
     log('Approving build...', 'in');
@@ -1136,9 +1295,11 @@ async function doApprove() {
       owner: proj.owner,
       repo: proj.repo,
       branch: proj.branch,
-      targetBranch: proj.mainBranch || 'main'
+      targetBranch: proj.mainBranch || 'main',
+      sessionId: proj.sessionId || null
     });
     proj.deployed = true;
+    if (proj.shipped) proj.shipped.approvedAt = new Date().toISOString();
     projects[proj._index] = { ...proj };
     saveProjects();
     log('Build approved. Give the deployment a moment to update.', 'ok');
@@ -1150,10 +1311,28 @@ async function doApprove() {
 }
 
 async function doReject() {
-  if (!proj) return;
+  if (!proj || !proj.branch) return;
   if (!confirm('Discard this build branch?')) return;
   try {
-    await api('/api/reject', { owner: proj.owner, repo: proj.repo, branch: proj.branch });
+    await api('/api/reject', {
+      owner: proj.owner,
+      repo: proj.repo,
+      branch: proj.branch,
+      sessionId: proj.sessionId || null
+    });
+
+    if (isPreviewProject(proj)) {
+      proj.branch = null;
+      proj.mainBranch = null;
+      proj.shipped = null;
+      proj.shipError = '';
+      projects[proj._index] = { ...proj };
+      saveProjects();
+      log('GitHub staging branch discarded. Preview session is still available for 24 hours.', 'in');
+      renderWork();
+      return;
+    }
+
     projects.splice(proj._index, 1);
     saveProjects();
     log('Build discarded.', 'in');
@@ -1196,6 +1375,10 @@ async function doRejectEdit() {
   }
 }
 
+function isPreviewProject(project) {
+  return Boolean(project?.storage === 'preview' || project?.sessionId);
+}
+
 function clearLog() {
   const container = byId('logE');
   if (container) container.innerHTML = '';
@@ -1210,8 +1393,18 @@ function log(message, state = '') {
   if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
 }
 
-function renderPreviewMarkup(previewUrl) {
+function renderPreviewMarkup(previewUrl, isLive = false) {
   if (!previewUrl) return '';
+  if (isLive) {
+    return `
+      <div style="margin-top:1rem;padding:0.875rem;border:1px solid var(--bdr);border-radius:4px;background:var(--bg-card);text-align:left;">
+        <div class="mono" style="font-size:0.625rem;font-weight:600;color:var(--dim);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem;">Protected Live Preview</div>
+        <div class="mono" style="font-size:0.75rem;color:var(--bright);word-break:break-all;">${esc(previewUrl)}</div>
+        <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--dim);line-height:1.5;">This preview is live inside the current browser session. It stays protected and resumable for up to 24 hours.</div>
+        <a href="${esc(previewUrl)}" target="_blank" rel="noopener noreferrer" class="pl" style="margin-top:0.75rem;">Open Live Preview</a>
+      </div>
+    `;
+  }
   return `
     <div style="margin-top:1rem;padding:0.875rem;border:1px solid var(--bdr);border-radius:4px;background:var(--bg-card);text-align:left;">
       <div class="mono" style="font-size:0.625rem;font-weight:600;color:var(--dim);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.5rem;">Expected Preview URL</div>
@@ -1281,8 +1474,12 @@ window.toDash = toDash;
 window.renderWork = renderWork;
 window.runStep = runStep;
 window.runEdit = runEdit;
+window.cacheShipDraft = cacheShipDraft;
+window.shipPreviewToGitHub = shipPreviewToGitHub;
 window.doApprove = doApprove;
 window.doReject = doReject;
 window.doApproveEdit = doApproveEdit;
 window.doRejectEdit = doRejectEdit;
+
+
 

@@ -1,6 +1,14 @@
-﻿# Generated from Cloudflare Pages project settings on 2026-03-28.
+# Generated from Cloudflare Pages project settings on 2026-03-28.
 name = "sheeper"
-compatibility_date = "2026-03-28"
+compatibility_date = "2026-03-29"
 pages_build_output_dir = "."
 
-[env.production]
+[[r2_buckets]]
+binding = "PREVIEW_ASSETS"
+bucket_name = "sheeper-preview-assets"
+preview_bucket_name = "sheeper-preview-assets"
+
+[[durable_objects.bindings]]
+name = "PREVIEW_SESSIONS"
+class_name = "PreviewSessionDO"
+script_name = "sheeper-preview-session"

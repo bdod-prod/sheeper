@@ -25,12 +25,13 @@ export function checkAuth(request, env) {
   return Boolean(token && token === env.SHEEPER_TOKEN);
 }
 
-export function jsonResponse(data, status = 200) {
+export function jsonResponse(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
+      'Access-Control-Allow-Origin': '*',
+      ...extraHeaders
     }
   });
 }

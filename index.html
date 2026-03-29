@@ -662,18 +662,7 @@
           <div>
             <div class="eyebrow">Project Starter</div>
             <div class="panel-title">Describe the site. I will only ask questions if I need them.</div>
-            <div class="panel-copy">The target GitHub repo is the only operational detail that stays outside the conversation. Everything else should feel like talking to a sharp builder, not filling out a ticket.</div>
-          </div>
-
-          <div class="repo-grid">
-            <div class="fg">
-              <label class="fl" for="starterOwner">GitHub Owner</label>
-              <input type="text" id="starterOwner" class="input" placeholder="bdod-prod" spellcheck="false" autocomplete="off">
-            </div>
-            <div class="fg">
-              <label class="fl" for="starterRepo">Repository</label>
-              <input type="text" id="starterRepo" class="input" placeholder="sheeper-sandbox" spellcheck="false" autocomplete="off">
-            </div>
+            <div class="panel-copy">Describe what you want and let SHEEPER show the result first. GitHub only enters the picture when you decide to save the preview.</div>
           </div>
 
           <details id="advDetails" class="adv">
@@ -741,7 +730,7 @@
                 <button type="button" class="btn btn-p" id="starterSendBtn" onclick="submitStarterMessage()">Generate Brief</button>
               </div>
             </div>
-            <div class="ownership-note">Your code. Your repo. Your Cloudflare. Free to ship.</div>
+            <div class="ownership-note">See it first. Ship it to your repo when you want ownership.</div>
           </div>
         </div>
       </section>
@@ -749,9 +738,9 @@
       <aside class="panel projects-panel">
         <div class="panel-body">
           <div>
-            <div class="eyebrow">Current Projects</div>
-            <div class="panel-title" style="font-size:1.05rem;">Resume active builds</div>
-            <div class="panel-copy" style="font-size:0.88rem;">Build state still lives in Git. The browser list just gets you back to the right branch quickly.</div>
+            <div class="eyebrow">Preview Sessions</div>
+            <div class="panel-title" style="font-size:1.05rem;">Resume active previews</div>
+            <div class="panel-copy" style="font-size:0.88rem;">Recent previews stay resumable for 24 hours. GitHub only matters if you decide to save one.</div>
           </div>
           <div id="pList" class="project-list"></div>
         </div>

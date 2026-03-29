@@ -8,8 +8,10 @@
     "cf:whoami": "npx --yes wrangler@4.78.0 whoami",
     "dev": "npx --yes wrangler@4.78.0 pages dev .",
     "dev:8788": "npx --yes wrangler@4.78.0 pages dev . --port 8788",
+    "dev:preview-worker": "npx --yes wrangler@4.78.0 dev --config preview-session-worker/wrangler.toml",
     "deploy": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper",
     "deploy:main": "npx --yes wrangler@4.78.0 pages deploy . --project-name sheeper --branch main",
+    "deploy:preview-worker": "npx --yes wrangler@4.78.0 deploy --config preview-session-worker/wrangler.toml",
     "secrets:push": "node ./scripts/push-pages-secrets.mjs"
   },
   "repository": {

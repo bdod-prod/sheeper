@@ -6,6 +6,9 @@ import {
   checkAuth, jsonResponse, errorResponse,
   githubPost, githubDelete, githubGet
 } from './_shared.js';
+import {
+  updatePreviewSession
+} from './_preview.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -15,7 +18,7 @@ export async function onRequestPost(context) {
   }
 
   try {
-    const { owner, repo, branch, targetBranch } = await request.json();
+    const { owner, repo, branch, targetBranch, sessionId } = await request.json();
 
     if (!owner || !repo || !branch) {
       return errorResponse('owner, repo, and branch are required', 400);
@@ -39,6 +42,23 @@ export async function onRequestPost(context) {
       );
     } catch {
       // Branch deletion is best-effort
+    }
+
+    if (sessionId) {
+      try {
+        await updatePreviewSession(env, request.url, sessionId, {
+          deployed: true,
+          shipped: {
+            owner,
+            repo,
+            branch,
+            mainBranch: target,
+            approvedAt: new Date().toISOString()
+          }
+        });
+      } catch (previewErr) {
+        console.warn('Preview session approve sync failed:', previewErr.message);
+      }
     }
 
     return jsonResponse({
