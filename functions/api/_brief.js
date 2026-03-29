@@ -1,4 +1,8 @@
 export const MAX_CLARIFICATION_TURNS = 5;
+export const SOURCE_TEXT_LIMIT = 16000;
+export const SOURCE_FILE_LIMIT = 3;
+
+const SOURCE_MODES = new Set(['preserve', 'modernize', 'rebuild']);
 
 export function sanitizeString(value, fallback = '') {
   if (value === undefined || value === null) {
@@ -54,9 +58,22 @@ export function normalizeAdvancedDetails(advanced = {}) {
   };
 }
 
+export function normalizeSourceMaterial(source = {}) {
+  const url = sanitizeString(source?.url);
+  return {
+    url,
+    mode: normalizeSourceMode(source?.mode),
+    text: truncateText(source?.text),
+    files: normalizeSourceFiles(source?.files),
+    urlTitle: url ? sanitizeString(source?.urlTitle) : '',
+    urlText: url ? truncateText(source?.urlText) : ''
+  };
+}
+
 export function normalizeBrief(input = {}, options = {}) {
   const {
     advanced = {},
+    sourceMaterial = {},
     summary = '',
     assumptions = [],
     inputMode = 'guided',
@@ -64,6 +81,7 @@ export function normalizeBrief(input = {}, options = {}) {
   } = options;
 
   const advancedDetails = normalizeAdvancedDetails(advanced);
+  const normalizedSource = normalizeSourceMaterial(sourceMaterial);
   const rawPages = normalizeList(input?.pages);
   const rawSections = normalizeList(input?.mustHaveSections || input?.sections);
   const styleKeywords = normalizeList(input?.styleKeywords);
@@ -111,14 +129,18 @@ export function normalizeBrief(input = {}, options = {}) {
     tone,
     styleKeywords,
     assumptions: assumptionList,
+    sourceMode: firstNonEmpty(sanitizeString(input?.sourceMode), normalizedSource.mode),
+    sourceInputs: describeSourceMaterial(normalizedSource),
     inputMode: inputMode === 'zero_question' ? 'zero_question' : 'guided',
     createdAt: sanitizeString(input?.createdAt, new Date().toISOString())
   };
 }
 
 export function buildIntakeRecord(payload = {}, brief = null) {
+  const normalizedSource = normalizeSourceMaterial(payload?.sourceMaterial);
   const normalizedBrief = brief ? normalizeBrief(brief, {
     advanced: payload?.advanced,
+    sourceMaterial: normalizedSource,
     summary: payload?.summary,
     assumptions: payload?.assumptions,
     inputMode: brief?.inputMode,
@@ -140,6 +162,7 @@ export function buildIntakeRecord(payload = {}, brief = null) {
     missingTopics: normalizeList(payload?.missingTopics),
     inputMode: normalizedBrief?.inputMode || (payload?.inputMode === 'zero_question' ? 'zero_question' : 'guided'),
     advanced: normalizeAdvancedDetails(payload?.advanced || normalizedBrief || {}),
+    sourceMaterial: normalizedSource,
     capturedAt: new Date().toISOString()
   };
 }
@@ -180,6 +203,65 @@ export function looksDetailedEnough(history = []) {
   return latest.length >= 180 || signalCount >= 3;
 }
 
+export function hasSourceMaterial(source = {}) {
+  const normalized = normalizeSourceMaterial(source);
+  return Boolean(
+    normalized.url ||
+    normalized.text ||
+    normalized.urlText ||
+    normalized.files.length
+  );
+}
+
+export function describeSourceMaterial(source = {}) {
+  const normalized = normalizeSourceMaterial(source);
+  const parts = [];
+
+  if (normalized.url) {
+    parts.push(`URL: ${normalized.url}`);
+  }
+  if (normalized.urlTitle) {
+    parts.push(`URL title: ${normalized.urlTitle}`);
+  }
+  if (normalized.text) {
+    parts.push('Pasted source text provided');
+  }
+  if (normalized.files.length) {
+    parts.push(`Source files: ${normalized.files.map((file) => file.name).join(', ')}`);
+  }
+
+  return parts.join(' | ');
+}
+
+export function formatSourceMaterialForPrompt(source = {}) {
+  const normalized = normalizeSourceMaterial(source);
+  if (!hasSourceMaterial(normalized)) {
+    return '';
+  }
+
+  const sections = [
+    `Source strategy: ${normalized.mode}`
+  ];
+
+  if (normalized.url) {
+    sections.push(`Source URL: ${normalized.url}`);
+  }
+  if (normalized.urlTitle) {
+    sections.push(`Source title: ${normalized.urlTitle}`);
+  }
+  if (normalized.urlText) {
+    sections.push(`Source URL content:\n${normalized.urlText}`);
+  }
+  if (normalized.text) {
+    sections.push(`Pasted source text:\n${normalized.text}`);
+  }
+  if (normalized.files.length) {
+    sections.push(normalized.files.map((file) => `--- Source file: ${file.name} ---\n${file.content}`).join('\n\n'));
+  }
+
+  return sections.join('\n\n');
+}
+
 function buildDesignDirection(tone, styleKeywords) {
   const pieces = [];
   if (tone) pieces.push(`Tone: ${tone}`);
@@ -200,4 +282,31 @@ function firstNonEmpty(...values) {
     if (text) return text;
   }
   return '';
+}
+
+function normalizeSourceMode(value) {
+  const normalized = sanitizeString(value, 'modernize').toLowerCase();
+  return SOURCE_MODES.has(normalized) ? normalized : 'modernize';
+}
+
+function normalizeSourceFiles(files = []) {
+  if (!Array.isArray(files)) {
+    return [];
+  }
+
+  return files
+    .slice(0, SOURCE_FILE_LIMIT)
+    .map((file) => ({
+      name: sanitizeString(file?.name, 'source.txt'),
+      content: truncateText(file?.content)
+    }))
+    .filter((file) => file.content);
+}
+
+function truncateText(value) {
+  const text = sanitizeString(value);
+  if (!text) {
+    return '';
+  }
+  return text.slice(0, SOURCE_TEXT_LIMIT);
 }

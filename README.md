@@ -33,7 +33,7 @@ sheeper_cloudflare_pages_repo/
 SHEEPER is a conversational interface for building and editing static websites.
 
 - `index.html` and `app.js` provide the operator UI.
-- `functions/api/intake.js` handles the conversational intake loop.
+- `functions/api/intake.js` handles the conversational intake loop, including optional source-material import from URLs, pasted text, and uploaded text-friendly files.
 - `functions/api/init.js` turns the confirmed brief into a branch, `_sheeper/` state, and a build plan.
 - Build sessions store both the canonical brief and intake transcript inside the target site's `_sheeper/` folder on staging branches.
 
@@ -96,6 +96,7 @@ This layout targets **Cloudflare Pages + Pages Functions**:
 - Local Cloudflare Pages dev smoke test passed for `/` and `/api/auth`
 - Conversational intake is now the primary project-start path
 - `_sheeper/intake.json` persists the intake transcript and compiled-brief provenance once build starts
+- Conversational intake can now use source material from a current site URL, pasted copy, or uploaded docs as raw material
 - GitHub remote configured as `origin`
 - Published to public GitHub repo `bdod-prod/sheeper`
 

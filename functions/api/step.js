@@ -10,6 +10,7 @@ import {
   checkAuth, jsonResponse, errorResponse, callAI, extractJson,
   githubGetFile, githubGetFileSafe, githubGetTree, githubCommitFiles
 } from './_shared.js';
+import { formatSourceMaterialForPrompt } from './_brief.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -29,15 +30,17 @@ export async function onRequestPost(context) {
     const token = env.GITHUB_TOKEN;
 
     // Step 1: Read project state
-    const [briefRaw, planRaw, logRaw] = await Promise.all([
+    const [briefRaw, planRaw, logRaw, intakeRaw] = await Promise.all([
       githubGetFile(owner, repo, '_sheeper/brief.json', branch, token),
       githubGetFile(owner, repo, '_sheeper/plan.json', branch, token),
-      githubGetFile(owner, repo, '_sheeper/log.json', branch, token)
+      githubGetFile(owner, repo, '_sheeper/log.json', branch, token),
+      githubGetFileSafe(owner, repo, '_sheeper/intake.json', branch, token)
     ]);
 
     const brief = JSON.parse(briefRaw);
     const plan = JSON.parse(planRaw);
     const log = JSON.parse(logRaw);
+    const intake = intakeRaw ? JSON.parse(intakeRaw) : null;
 
     // Determine which step to execute
     const targetStep = stepIndex !== undefined ? stepIndex : log.currentStep;
@@ -107,6 +110,7 @@ export async function onRequestPost(context) {
       existingContents,
       completedSummary,
       templateContext,
+      sourceMaterial: intake?.sourceMaterial,
       uploadedContent,
       userGuidance
     });
@@ -212,7 +216,7 @@ export async function onRequestPost(context) {
 function buildStepPrompt({
   brief, plan, currentStep, stepIndex, existingFiles,
   existingContents, completedSummary, templateContext,
-  uploadedContent, userGuidance
+  sourceMaterial, uploadedContent, userGuidance
 }) {
   const system = `You are SHEEPER, a website builder AI. You generate production-ready static HTML files. You follow these rules strictly:
 - Clean, semantic HTML5
@@ -230,6 +234,7 @@ function buildStepPrompt({
   const existingFilesStr = Object.entries(existingContents)
     .map(([path, content]) => `--- ${path} ---\n${content}`)
     .join('\n\n');
+  const sourceContext = formatSourceMaterialForPrompt(sourceMaterial);
 
   const content = `## Current Build Step: ${currentStep.name} (Step ${stepIndex + 1} of ${plan.steps.length})
 
@@ -264,6 +269,8 @@ ${existingFiles.length ? existingFiles.join('\n') : '(empty repository)'}
 ${existingFilesStr ? `### Existing File Contents\n${existingFilesStr}` : ''}
 
 ${templateContext ? `### Template Reference\n${templateContext}` : ''}
+
+${sourceContext ? `### Source Material\n${sourceContext}` : ''}
 
 ${uploadedContent ? `### Uploaded Content\n${uploadedContent}` : ''}
 

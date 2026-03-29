@@ -32,6 +32,7 @@ export async function onRequestPost(context) {
 
     const brief = normalizeBrief(body?.brief || {}, {
       advanced: body?.intake?.advanced || body?.brief,
+      sourceMaterial: body?.intake?.sourceMaterial,
       summary: body?.intake?.summary || body?.brief?.summary || body?.brief?.purpose,
       assumptions: body?.intake?.assumptions || body?.brief?.assumptions,
       inputMode: body?.brief?.inputMode || body?.intake?.inputMode,
@@ -172,6 +173,8 @@ function buildPlanPrompt(brief, templateContext) {
 - Design Direction: ${brief.designDirection || 'Not specified'}
 - Notes: ${brief.notes || 'None'}
 - Assumptions: ${(brief.assumptions || []).join(' | ') || 'None'}
+- Source Strategy: ${brief.sourceMode || 'modernize'}
+- Source Inputs: ${brief.sourceInputs || 'None'}
 
 ${templateContext ? `## Existing Project Context\n${templateContext}` : ''}
 

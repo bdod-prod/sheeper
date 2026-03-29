@@ -8,12 +8,15 @@ import {
 import {
   MAX_CLARIFICATION_TURNS,
   buildIntakeRecord,
+  formatSourceMaterialForPrompt,
+  hasSourceMaterial,
   latestUserMessage,
   looksDetailedEnough,
   normalizeAdvancedDetails,
   normalizeBrief,
   normalizeConversationHistory,
   normalizeList,
+  normalizeSourceMaterial,
   sanitizeString
 } from './_brief.js';
 
@@ -28,6 +31,7 @@ export async function onRequestPost(context) {
     const body = await request.json();
     const history = normalizeConversationHistory(body?.history);
     const advanced = normalizeAdvancedDetails(body?.advanced);
+    const sourceMaterial = await hydrateSourceMaterial(body?.sourceMaterial);
     const currentBrief = body?.currentBrief || null;
     const clarificationTurns = clampTurns(body?.turns);
 
@@ -38,6 +42,7 @@ export async function onRequestPost(context) {
     const decision = await analyzeIntake(env, {
       history,
       advanced,
+      sourceMaterial,
       currentBrief,
       clarificationTurns
     });
@@ -55,13 +60,15 @@ export async function onRequestPost(context) {
         missingTopics: normalizeList(decision.missingTopics),
         assumptions: normalizeList(decision.assumptions),
         turns: Math.min(MAX_CLARIFICATION_TURNS, clarificationTurns + 1),
-        inputMode: clarificationTurns === 0 ? 'zero_question' : 'guided'
+        inputMode: clarificationTurns === 0 ? 'zero_question' : 'guided',
+        sourceMaterial
       });
     }
 
     const compiled = await compileBrief(env, {
       history,
       advanced,
+      sourceMaterial,
       currentBrief,
       clarificationTurns,
       decision
@@ -75,7 +82,8 @@ export async function onRequestPost(context) {
         missingTopics: normalizeList(['audience', 'primary CTA']),
         assumptions: normalizeList(decision.assumptions),
         turns: Math.min(MAX_CLARIFICATION_TURNS, clarificationTurns + 1),
-        inputMode: clarificationTurns === 0 ? 'zero_question' : 'guided'
+        inputMode: clarificationTurns === 0 ? 'zero_question' : 'guided',
+        sourceMaterial
       });
     }
 
@@ -85,7 +93,8 @@ export async function onRequestPost(context) {
       assumptions: compiled.assumptions,
       missingTopics: [],
       inputMode: compiled.inputMode,
-      advanced
+      advanced,
+      sourceMaterial
     }, compiled);
 
     return jsonResponse({
@@ -99,7 +108,8 @@ export async function onRequestPost(context) {
       assumptions: intakeRecord.assumptions,
       missingTopics: [],
       turns: clarificationTurns,
-      inputMode: compiled.inputMode
+      inputMode: compiled.inputMode,
+      sourceMaterial: intakeRecord.sourceMaterial
     });
 
   } catch (err) {
@@ -108,8 +118,14 @@ export async function onRequestPost(context) {
   }
 }
 
-async function analyzeIntake(env, { history, advanced, currentBrief, clarificationTurns }) {
-  const prompt = buildIntakeDecisionPrompt({ history, advanced, currentBrief, clarificationTurns });
+async function analyzeIntake(env, { history, advanced, sourceMaterial, currentBrief, clarificationTurns }) {
+  const prompt = buildIntakeDecisionPrompt({
+    history,
+    advanced,
+    sourceMaterial,
+    currentBrief,
+    clarificationTurns
+  });
 
   try {
     const { text } = await callAI(env, prompt.messages, {
@@ -120,11 +136,11 @@ async function analyzeIntake(env, { history, advanced, currentBrief, clarificati
     return extractJson(text);
   } catch (err) {
     console.error('Intake decision fallback:', err);
-    if (clarificationTurns >= MAX_CLARIFICATION_TURNS || looksDetailedEnough(history)) {
+    if (clarificationTurns >= MAX_CLARIFICATION_TURNS || looksDetailedEnough(history) || hasSourceMaterial(sourceMaterial)) {
       return {
         status: 'ready',
         assistantReply: 'I think I have enough. Here is the brief I understood before we build.',
-        summary: latestUserMessage(history),
+        summary: sourceAwareSummary(history, sourceMaterial),
         assumptions: []
       };
     }
@@ -139,13 +155,14 @@ async function analyzeIntake(env, { history, advanced, currentBrief, clarificati
   }
 }
 
-async function compileBrief(env, { history, advanced, currentBrief, clarificationTurns, decision }) {
+async function compileBrief(env, { history, advanced, sourceMaterial, currentBrief, clarificationTurns, decision }) {
   const prompt = buildBriefCompilePrompt({
     history,
     advanced,
     currentBrief,
     clarificationTurns,
-    decision
+    decision,
+    sourceMaterial
   });
 
   try {
@@ -158,6 +175,7 @@ async function compileBrief(env, { history, advanced, currentBrief, clarificatio
     const parsed = extractJson(text);
     return normalizeBrief(parsed, {
       advanced,
+      sourceMaterial,
       summary: parsed?.summary || decision?.summary || latestUserMessage(history),
       assumptions: normalizeList([
         ...normalizeList(parsed?.assumptions),
@@ -172,6 +190,7 @@ async function compileBrief(env, { history, advanced, currentBrief, clarificatio
 
   const fallbackCandidate = normalizeBrief(decision?.candidateBrief || currentBrief || {}, {
     advanced,
+    sourceMaterial,
     summary: decision?.summary || latestUserMessage(history),
     assumptions: normalizeList(decision?.assumptions),
     inputMode: clarificationTurns === 0 ? 'zero_question' : 'guided',
@@ -185,7 +204,7 @@ async function compileBrief(env, { history, advanced, currentBrief, clarificatio
   return null;
 }
 
-function buildIntakeDecisionPrompt({ history, advanced, currentBrief, clarificationTurns }) {
+function buildIntakeDecisionPrompt({ history, advanced, sourceMaterial, currentBrief, clarificationTurns }) {
   const system = `You are SHEEPER's intake guide. Decide whether the conversation is already build-ready or whether SHEEPER should ask exactly one more question. Prefer moving forward. Avoid forms. Ask a question only when uncertainty would materially hurt the build.`;
 
   const conversation = history
@@ -205,6 +224,8 @@ ${conversation}
 ${currentBrief ? `## Existing Compiled Brief\n${JSON.stringify(currentBrief, null, 2)}` : ''}
 ## Advanced Details
 ${JSON.stringify(advanced, null, 2)}
+
+${hasSourceMaterial(sourceMaterial) ? `## Source Material\n${formatSourceMaterialForPrompt(sourceMaterial)}` : ''}
 
 Respond ONLY with JSON:
 {
@@ -231,6 +252,7 @@ Respond ONLY with JSON:
 Rules:
 - Ask at most one question.
 - If the latest user message is already detailed enough, choose "ready".
+- If source material answers the missing questions, prefer READY over another question.
 - Prefer assumptions over asking for decorative details.
 - Focus the single question on the uncertainty with the biggest impact on build quality.
 - Do not ask for information already implied by the conversation.
@@ -242,7 +264,7 @@ Rules:
   };
 }
 
-function buildBriefCompilePrompt({ history, advanced, currentBrief, clarificationTurns, decision }) {
+function buildBriefCompilePrompt({ history, advanced, sourceMaterial, currentBrief, clarificationTurns, decision }) {
   const system = `You turn SHEEPER conversations into canonical website briefs. Produce a clean, opinionated brief that is ready for build planning. Infer intelligently. Do not ask questions.`;
 
   const conversation = history
@@ -265,6 +287,8 @@ ${JSON.stringify({
 
 ## Advanced Details
 ${JSON.stringify(advanced, null, 2)}
+
+${hasSourceMaterial(sourceMaterial) ? `## Source Material\n${formatSourceMaterialForPrompt(sourceMaterial)}` : ''}
 
 ## Required Output
 Respond ONLY with JSON:
@@ -293,6 +317,7 @@ Rules:
 - mustHaveSections should capture important sections or content blocks for the first build.
 - Keep notes short and useful.
 - If the conversation already contains a strong visual direction, preserve it.
+- If source material is present, use it to infer offer, audience, proof, messaging, and structure.
 - If an existing brief is present, update it instead of discarding it.`;
 
   return {
@@ -307,4 +332,105 @@ function clampTurns(value) {
     return 0;
   }
   return Math.min(MAX_CLARIFICATION_TURNS, Math.floor(number));
+}
+
+async function hydrateSourceMaterial(sourceMaterial) {
+  const normalized = normalizeSourceMaterial(sourceMaterial);
+
+  if (!normalized.url || normalized.urlText) {
+    return normalized;
+  }
+
+  try {
+    const hydrated = await fetchSourceMaterialFromUrl(normalized.url);
+    return {
+      ...normalized,
+      ...hydrated
+    };
+  } catch (err) {
+    console.error('Source URL fetch failed:', err.message || err);
+    return normalized;
+  }
+}
+
+async function fetchSourceMaterialFromUrl(url) {
+  const parsed = new URL(url);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only http and https URLs are supported.');
+  }
+
+  const response = await fetch(parsed.toString(), {
+    redirect: 'follow',
+    headers: {
+      'Accept': 'text/html, text/plain, application/json;q=0.9, */*;q=0.1'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Source URL returned ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const raw = await response.text();
+  const text = contentType.includes('text/html')
+    ? extractReadableText(raw)
+    : collapseWhitespace(raw);
+
+  return {
+    urlTitle: contentType.includes('text/html') ? extractHtmlTitle(raw) : '',
+    urlText: text
+  };
+}
+
+function extractHtmlTitle(html) {
+  const match = String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return decodeEntities(collapseWhitespace(match?.[1] || ''));
+}
+
+function extractReadableText(html) {
+  const withoutNoise = String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<\/(p|div|section|article|header|footer|li|h1|h2|h3|h4|h5|h6|br)>/gi, '\n');
+
+  return collapseWhitespace(
+    decodeEntities(withoutNoise.replace(/<[^>]+>/g, ' '))
+  );
+}
+
+function collapseWhitespace(value) {
+  return sanitizeString(value)
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function decodeEntities(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function sourceAwareSummary(history, sourceMaterial) {
+  const latest = latestUserMessage(history);
+  if (latest) {
+    return latest;
+  }
+  if (sourceMaterial?.urlTitle) {
+    return `Use ${sourceMaterial.urlTitle} as raw material for the site build.`;
+  }
+  if (sourceMaterial?.url) {
+    return `Use ${sourceMaterial.url} as raw material for the site build.`;
+  }
+  if (sourceMaterial?.text || sourceMaterial?.files?.length) {
+    return 'Use the supplied source material as the basis for the site build.';
+  }
+  return '';
 }

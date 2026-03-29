@@ -1,6 +1,8 @@
 const PROJECTS_KEY = 'sheeper_projects';
 const STARTER_DRAFT_KEY = 'sheeper_starter_draft';
 const MAX_INTAKE_TURNS = 5;
+const STARTER_SOURCE_TEXT_LIMIT = 16000;
+const STARTER_SOURCE_FILE_LIMIT = 3;
 const STARTER_EXAMPLES = [
   {
     label: 'Portfolio, tonight',
@@ -92,6 +94,25 @@ function bindStarterInputs() {
     });
   }
 
+  ['starterSourceUrl', 'starterSourceMode', 'starterSourceText'].forEach((id) => {
+    const element = byId(id);
+    if (!element) return;
+    const eventName = element.tagName === 'SELECT' ? 'change' : 'input';
+    element.addEventListener(eventName, () => {
+      syncStarterFromInputs();
+      setStarterError('');
+      renderStarter();
+    });
+  });
+
+  const sourceInput = byId('starterSourceInput');
+  if (sourceInput) {
+    sourceInput.addEventListener('change', async (event) => {
+      await handleStarterSourceFiles(event.target.files);
+      event.target.value = '';
+    });
+  }
+
   const details = byId('advDetails');
   if (details) {
     details.addEventListener('toggle', () => {
@@ -120,7 +141,15 @@ function defaultStarterDraft() {
     turns: 0,
     followUpMode: false,
     advancedOpen: false,
-    advanced: { domain: '', language: 'en', templateRepo: '' }
+    advanced: { domain: '', language: 'en', templateRepo: '' },
+    sourceMaterial: {
+      url: '',
+      mode: 'modernize',
+      text: '',
+      files: [],
+      urlTitle: '',
+      urlText: ''
+    }
   };
 }
 
@@ -142,7 +171,8 @@ function mergeStarterDraft(stored = {}) {
     assumptions: Array.isArray(stored.assumptions) ? stored.assumptions.filter(Boolean) : [],
     missingTopics: Array.isArray(stored.missingTopics) ? stored.missingTopics.filter(Boolean) : [],
     compiledBrief: stored.compiledBrief && typeof stored.compiledBrief === 'object' ? stored.compiledBrief : null,
-    advanced: { ...base.advanced, ...(stored.advanced || {}) }
+    advanced: { ...base.advanced, ...(stored.advanced || {}) },
+    sourceMaterial: normalizeStarterSourceMaterial(stored.sourceMaterial)
   };
 }
 
@@ -214,6 +244,15 @@ function syncStarterFromInputs() {
     language: valueOf('starterLanguage') || 'en',
     templateRepo: valueOf('starterTemplateRepo')
   };
+  const nextUrl = valueOf('starterSourceUrl');
+  starterDraft.sourceMaterial = {
+    ...starterDraft.sourceMaterial,
+    url: nextUrl,
+    mode: valueOf('starterSourceMode') || 'modernize',
+    text: truncateStarterText(valueOf('starterSourceText')),
+    urlTitle: nextUrl === starterDraft.sourceMaterial.url ? starterDraft.sourceMaterial.urlTitle : '',
+    urlText: nextUrl === starterDraft.sourceMaterial.url ? starterDraft.sourceMaterial.urlText : ''
+  };
   const details = byId('advDetails');
   starterDraft.advancedOpen = Boolean(details?.open);
   saveStarterDraft();
@@ -226,6 +265,9 @@ function applyStarterDraftToInputs() {
   setValue('starterDomain', starterDraft.advanced.domain);
   setValue('starterLanguage', starterDraft.advanced.language || 'en');
   setValue('starterTemplateRepo', starterDraft.advanced.templateRepo);
+  setValue('starterSourceUrl', starterDraft.sourceMaterial.url);
+  setValue('starterSourceMode', starterDraft.sourceMaterial.mode || 'modernize');
+  setValue('starterSourceText', starterDraft.sourceMaterial.text);
   const details = byId('advDetails');
   if (details) details.open = Boolean(starterDraft.advancedOpen);
 }
@@ -241,6 +283,7 @@ function renderStarter() {
   const briefSlot = byId('starterBriefSlot');
   const meta = byId('starterMeta');
   const examples = byId('starterExamples');
+  const sourceFiles = byId('starterSourceFiles');
   const sendButton = byId('starterSendBtn');
   const resetButton = byId('starterResetBtn');
   const composer = byId('starterComposer');
@@ -258,6 +301,13 @@ function renderStarter() {
     examples.innerHTML = renderStarterExampleChips();
     examples.querySelectorAll('[data-starter-example]').forEach((button) => {
       button.addEventListener('click', () => applyStarterExample(Number(button.dataset.starterExample)));
+    });
+  }
+
+  if (sourceFiles) {
+    sourceFiles.innerHTML = renderStarterSourceFiles();
+    sourceFiles.querySelectorAll('[data-remove-source-index]').forEach((button) => {
+      button.addEventListener('click', () => removeStarterSourceFile(Number(button.dataset.removeSourceIndex)));
     });
   }
 
@@ -283,7 +333,7 @@ function renderStarterEmptyState() {
         <h2>Talk like you already have a builder in the room.</h2>
       </div>
       <div class="starter-thesis">
-        A strong first message can skip questions entirely. If something critical is missing, SHEEPER will ask one strategic question at a time instead of dropping you into a form.
+        A strong first message can skip questions entirely. You can also point at raw material: an old site, a profile URL, a README, or pasted copy. If something critical is still missing, SHEEPER will ask one strategic question at a time instead of dropping you into a form.
       </div>
       <div class="example-list">
         <div class="example-item">
@@ -315,6 +365,143 @@ function applyStarterExample(index) {
   byId('starterComposer')?.focus();
 }
 
+function renderStarterSourceFiles() {
+  if (!starterDraft.sourceMaterial.files.length) {
+    return '<div class="helper-copy">Optional: attach up to three text-friendly files such as a README, notes, copy doc, or exported brief.</div>';
+  }
+
+  return starterDraft.sourceMaterial.files.map((file, index) => `
+    <div class="fci">
+      <span>${esc(file.name)}</span>
+      <button type="button" data-remove-source-index="${index}" aria-label="Remove ${esc(file.name)} from source material">x</button>
+    </div>
+  `).join('');
+}
+
+async function handleStarterSourceFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  if (!files.every(isTextFriendlySourceFile)) {
+    setStarterError('Use text-friendly files only for source material: md, txt, html, json, yml, or similar.');
+    return;
+  }
+
+  const remaining = Math.max(0, STARTER_SOURCE_FILE_LIMIT - starterDraft.sourceMaterial.files.length);
+  if (!remaining) {
+    setStarterError(`Source file limit reached. Keep it to ${STARTER_SOURCE_FILE_LIMIT} files.`);
+    return;
+  }
+
+  const accepted = files.slice(0, remaining);
+
+  try {
+    const parsed = await Promise.all(accepted.map(async (file) => ({
+      name: file.name,
+      content: truncateStarterText(await file.text())
+    })));
+
+    starterDraft.sourceMaterial.files = normalizeStarterSourceFiles([
+      ...starterDraft.sourceMaterial.files,
+      ...parsed
+    ]);
+    saveStarterDraft();
+    setStarterError('');
+    renderStarter();
+  } catch {
+    setStarterError('One of the source files could not be read. Try plain text, Markdown, HTML, JSON, or YAML.');
+  }
+}
+
+function removeStarterSourceFile(index) {
+  starterDraft.sourceMaterial.files.splice(index, 1);
+  saveStarterDraft();
+  renderStarter();
+}
+
+function normalizeStarterSourceMaterial(sourceMaterial = {}) {
+  const url = String(sourceMaterial?.url || '').trim();
+  return {
+    url,
+    mode: normalizeStarterSourceMode(sourceMaterial?.mode),
+    text: truncateStarterText(sourceMaterial?.text),
+    files: normalizeStarterSourceFiles(sourceMaterial?.files),
+    urlTitle: url ? String(sourceMaterial?.urlTitle || '').trim() : '',
+    urlText: url ? truncateStarterText(sourceMaterial?.urlText) : ''
+  };
+}
+
+function normalizeStarterSourceFiles(files = []) {
+  return (Array.isArray(files) ? files : [])
+    .slice(0, STARTER_SOURCE_FILE_LIMIT)
+    .map((file) => ({
+      name: String(file?.name || 'source.txt').trim() || 'source.txt',
+      content: truncateStarterText(file?.content)
+    }))
+    .filter((file) => file.content);
+}
+
+function normalizeStarterSourceMode(value) {
+  const normalized = String(value || 'modernize').trim().toLowerCase();
+  return ['preserve', 'modernize', 'rebuild'].includes(normalized) ? normalized : 'modernize';
+}
+
+function truncateStarterText(value) {
+  return String(value || '').trim().slice(0, STARTER_SOURCE_TEXT_LIMIT);
+}
+
+function hasStarterSourceMaterial() {
+  const source = normalizeStarterSourceMaterial(starterDraft.sourceMaterial);
+  return Boolean(source.url || source.text || source.urlText || source.files.length);
+}
+
+function buildStarterSourceChannelSummary() {
+  const source = normalizeStarterSourceMaterial(starterDraft.sourceMaterial);
+  const channels = [];
+  if (source.url) channels.push('URL');
+  if (source.text) channels.push('pasted text');
+  if (source.files.length) channels.push(`${source.files.length} file${source.files.length === 1 ? '' : 's'}`);
+  return channels.join(', ') || 'source material';
+}
+
+function defaultSourcePrompt() {
+  const source = normalizeStarterSourceMaterial(starterDraft.sourceMaterial);
+  if (source.url) {
+    return 'Use the source URL as raw material and build a much better version of this site.';
+  }
+  if (source.text || source.files.length) {
+    return 'Use the provided source material as raw material and build the site from it.';
+  }
+  return '';
+}
+
+function buildSourceSummary(brief) {
+  const summary = String(brief?.sourceInputs || '').trim();
+  if (!summary) return 'No source material attached';
+  const prefix = brief?.sourceMode ? `${brief.sourceMode}: ` : '';
+  return `${prefix}${summary}`;
+}
+
+function isTextFriendlySourceFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  const type = String(file?.type || '').toLowerCase();
+  return Boolean(
+    type.startsWith('text/') ||
+    type.includes('json') ||
+    type.includes('xml') ||
+    name.endsWith('.md') ||
+    name.endsWith('.markdown') ||
+    name.endsWith('.txt') ||
+    name.endsWith('.html') ||
+    name.endsWith('.htm') ||
+    name.endsWith('.json') ||
+    name.endsWith('.xml') ||
+    name.endsWith('.yml') ||
+    name.endsWith('.yaml') ||
+    name.endsWith('.csv')
+  );
+}
+
 function renderMessageBubble(message) {
   return `
     <div class="bubble ${message.role === 'assistant' ? 'assistant' : 'user'}">
@@ -342,6 +529,7 @@ function renderBriefCard(brief) {
         <div class="brief-block"><span class="label">Pages</span><div class="mini-list">${renderChipList(brief.pages, 'Home')}</div></div>
         <div class="brief-block"><span class="label">Sections</span><div class="mini-list">${renderChipList(brief.mustHaveSections, 'To be inferred')}</div></div>
         <div class="brief-block"><span class="label">Visual Direction</span><div>${esc(buildVisualSummary(brief))}</div></div>
+        <div class="brief-block"><span class="label">Source Material</span><div>${esc(buildSourceSummary(brief))}</div></div>
         <div class="brief-block"><span class="label">Assumptions</span><div class="assumption-list">${renderChipList(brief.assumptions, 'No major assumptions')}</div></div>
       </div>
       <div class="brief-actions">
@@ -370,20 +558,23 @@ function buildVisualSummary(brief) {
 }
 
 function starterMetaText() {
+  const sourceHint = hasStarterSourceMaterial()
+    ? ` Source material attached via ${buildStarterSourceChannelSummary()}.`
+    : '';
   if (starterDraft.followUpMode) {
-    return 'Add the detail you want changed and SHEEPER will refresh the brief before building.';
+    return `Add the detail you want changed and SHEEPER will refresh the brief before building.${sourceHint}`;
   }
   if (starterDraft.status === 'ready' && starterDraft.compiledBrief) {
-    return 'Brief ready. Review it, build now, or add detail if you want to tune it first.';
+    return `Brief ready. Review it, build now, or add detail if you want to tune it first.${sourceHint}`;
   }
   if (starterDraft.status === 'clarify') {
     const topics = starterDraft.missingTopics.length ? ` Open questions: ${starterDraft.missingTopics.join(', ')}.` : '';
-    return `Clarification ${Math.min(starterDraft.turns, MAX_INTAKE_TURNS)} of ${MAX_INTAKE_TURNS}.${topics}`;
+    return `Clarification ${Math.min(starterDraft.turns, MAX_INTAKE_TURNS)} of ${MAX_INTAKE_TURNS}.${topics}${sourceHint}`;
   }
   if (starterDraft.history.length) {
-    return 'Conversation underway. Keep talking naturally and SHEEPER will decide when the brief is ready.';
+    return `Conversation underway. Keep talking naturally and SHEEPER will decide when the brief is ready.${sourceHint}`;
   }
-  return 'Start from a full-brief chip or type your own. A strong opening prompt can skip questions entirely.';
+  return `Start from a full-brief chip or type your own. A strong opening prompt can skip questions entirely.${sourceHint}`;
 }
 
 function starterSendButtonLabel() {
@@ -396,7 +587,8 @@ function starterSendButtonLabel() {
 function starterHasWork() {
   return Boolean(
     starterDraft.history.length || starterDraft.composer || starterDraft.compiledBrief || starterDraft.summary ||
-    starterDraft.owner || starterDraft.repo || starterDraft.advanced.domain || starterDraft.advanced.templateRepo
+    starterDraft.owner || starterDraft.repo || starterDraft.advanced.domain || starterDraft.advanced.templateRepo ||
+    hasStarterSourceMaterial()
   );
 }
 
@@ -410,9 +602,12 @@ async function submitStarterMessage() {
     return;
   }
 
-  const message = starterDraft.composer.trim();
+  let message = starterDraft.composer.trim();
+  if (!message && hasStarterSourceMaterial()) {
+    message = defaultSourcePrompt();
+  }
   if (!message) {
-    setStarterError('Tell SHEEPER what you want to build or what you want to refine.');
+    setStarterError('Tell SHEEPER what you want to build, or add source material and let SHEEPER build from that.');
     return;
   }
 
@@ -432,7 +627,8 @@ async function submitStarterMessage() {
       history: starterDraft.history,
       turns: starterDraft.turns,
       advanced: starterDraft.advanced,
-      currentBrief
+      currentBrief,
+      sourceMaterial: starterDraft.sourceMaterial
     });
 
     if (result.assistantReply) starterDraft.history.push({ role: 'assistant', content: result.assistantReply });
@@ -440,6 +636,7 @@ async function submitStarterMessage() {
     starterDraft.assumptions = Array.isArray(result.assumptions) ? result.assumptions : [];
     starterDraft.missingTopics = Array.isArray(result.missingTopics) ? result.missingTopics : [];
     starterDraft.turns = Number.isFinite(Number(result.turns)) ? Number(result.turns) : starterDraft.turns;
+    if (result.sourceMaterial) starterDraft.sourceMaterial = normalizeStarterSourceMaterial(result.sourceMaterial);
 
     if (result.status === 'ready' && result.brief) {
       starterDraft.compiledBrief = result.brief;
@@ -471,7 +668,8 @@ function resetStarterFlow(preserveTarget = true) {
     owner: starterDraft.owner,
     repo: starterDraft.repo,
     advanced: { ...starterDraft.advanced },
-    advancedOpen: starterDraft.advancedOpen
+    advancedOpen: starterDraft.advancedOpen,
+    sourceMaterial: normalizeStarterSourceMaterial(starterDraft.sourceMaterial)
   } : null;
 
   starterDraft = defaultStarterDraft();
@@ -480,6 +678,7 @@ function resetStarterFlow(preserveTarget = true) {
     starterDraft.repo = preserved.repo;
     starterDraft.advanced = preserved.advanced;
     starterDraft.advancedOpen = preserved.advancedOpen;
+    starterDraft.sourceMaterial = preserved.sourceMaterial;
   }
 
   saveStarterDraft();
@@ -515,7 +714,8 @@ async function buildStarterProject() {
         assumptions: starterDraft.assumptions,
         missingTopics: starterDraft.missingTopics,
         inputMode: starterDraft.compiledBrief.inputMode,
-        advanced: starterDraft.advanced
+        advanced: starterDraft.advanced,
+        sourceMaterial: starterDraft.sourceMaterial
       }
     });
 
@@ -1085,3 +1285,4 @@ window.doApprove = doApprove;
 window.doReject = doReject;
 window.doApproveEdit = doApproveEdit;
 window.doRejectEdit = doRejectEdit;
+
