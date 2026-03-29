@@ -871,6 +871,86 @@ function renderSteps() {
     `;
   }).join('');
 }
+
+function setupDropZone() {
+  uploads = [];
+  const zone = byId('dz');
+  const input = byId('fIn');
+  renderFiles();
+  if (!zone || !input) return;
+
+  zone.addEventListener('click', (event) => {
+    if (event.target === input) return;
+    input.click();
+  });
+
+  zone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    zone.classList.add('on');
+  });
+
+  zone.addEventListener('dragleave', () => {
+    zone.classList.remove('on');
+  });
+
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    zone.classList.remove('on');
+    addFiles(event.dataTransfer?.files || []);
+  });
+
+  input.addEventListener('change', (event) => {
+    addFiles(event.target.files || []);
+    input.value = '';
+  });
+}
+
+function addFiles(fileList) {
+  for (const file of Array.from(fileList || [])) {
+    if (!uploads.find((upload) => upload.name === file.name && upload.size === file.size)) {
+      uploads.push(file);
+    }
+  }
+  renderFiles();
+}
+
+function removeFileAt(index) {
+  uploads.splice(index, 1);
+  renderFiles();
+}
+
+function renderFiles() {
+  const container = byId('fList');
+  if (!container) return;
+  container.innerHTML = uploads.map((file, index) => `
+    <div class="fci"><span>${esc(file.name)}</span><button type="button" data-upload-index="${index}" aria-label="Remove ${esc(file.name)}">x</button></div>
+  `).join('');
+  container.querySelectorAll('[data-upload-index]').forEach((button) => {
+    button.addEventListener('click', () => removeFileAt(Number(button.dataset.uploadIndex)));
+  });
+}
+
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareUploads() {
+  const prepared = [];
+  for (const file of uploads) {
+    prepared.push({
+      name: file.name,
+      type: file.type,
+      data: await toBase64(file)
+    });
+  }
+  return prepared;
+}
+
 function renderWork() {
   const container = byId('wMain');
   if (!container) return;
