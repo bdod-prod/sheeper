@@ -1,6 +1,7 @@
 import {
   callAI,
-  extractJson
+  extractJson,
+  extractJsonWithRepair
 } from './_shared.js';
 import { formatSourceMaterialForPrompt } from './_brief.js';
 
@@ -38,7 +39,20 @@ export async function runStepGeneration(env, {
     task: 'step'
   });
 
-  const result = extractJson(text);
+  const result = await extractJsonWithRepair(env, text, {
+    label: `build step "${currentStep.name}"`,
+    schemaHint: `{
+  "summary": "what was built",
+  "files": [
+    {
+      "path": "relative/path/to/file.html",
+      "action": "created or modified",
+      "content": "complete file content"
+    }
+  ],
+  "notes": "optional notes"
+}`
+  });
   if (!result.files || !result.files.length) {
     throw new Error('AI generated no files. Try adding more guidance.');
   }
@@ -76,7 +90,10 @@ export async function runEditGeneration(env, {
 
   let filesToRead = [];
   try {
-    filesToRead = extractJson(planText).files_to_read || [];
+    filesToRead = (await extractJsonWithRepair(env, planText, {
+      label: 'edit file-selection response',
+      schemaHint: `{ "files_to_read": ["path/file.html"], "reasoning": "why" }`
+    })).files_to_read || [];
   } catch {}
 
   const selectedContents = {};
@@ -97,7 +114,19 @@ export async function runEditGeneration(env, {
     })
   }], { maxTokens: 16000, task: 'edit' });
 
-  const changes = extractJson(changeText);
+  const changes = await extractJsonWithRepair(env, changeText, {
+    label: 'edit response',
+    schemaHint: `{
+  "summary": "what changed",
+  "files": [
+    {
+      "path": "file.html",
+      "action": "modified",
+      "content": "full file content"
+    }
+  ]
+}`
+  });
   if (!changes.files?.length) {
     throw new Error('AI generated no changes. Be more specific.');
   }

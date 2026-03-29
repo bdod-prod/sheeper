@@ -10,7 +10,8 @@ const TASK_PROVIDER_ORDER = {
   plan: ['claude', 'openai', 'grok'],
   step: ['claude', 'openai', 'grok'],
   edit_select: ['grok', 'openai', 'claude'],
-  edit: ['claude', 'openai', 'grok']
+  edit: ['claude', 'openai', 'grok'],
+  json_repair: ['grok', 'openai', 'claude']
 };
 
 const DEFAULT_AI_MODELS = {
@@ -281,6 +282,44 @@ export function extractJson(text) {
   }
 
   throw new Error('Could not extract JSON from AI response');
+}
+
+export async function extractJsonWithRepair(env, text, {
+  label = 'AI response',
+  schemaHint = 'Return a valid JSON object.'
+} = {}) {
+  try {
+    return extractJson(text);
+  } catch (initialError) {
+    const repairPrompt = `The following output was supposed to be valid JSON for ${label}, but it failed to parse.
+
+Return ONLY valid JSON.
+- Do not wrap the answer in markdown fences
+- Do not add commentary
+- Preserve file contents and wording as closely as possible
+- Escape quotes, newlines, and backslashes correctly
+- Remove any surrounding prose if present
+
+Expected shape:
+${schemaHint}
+
+Malformed output:
+${text}`;
+
+    try {
+      const { text: repaired } = await callAI(env, [{
+        role: 'user',
+        content: repairPrompt
+      }], {
+        maxTokens: 16000,
+        task: 'json_repair'
+      });
+
+      return extractJson(repaired);
+    } catch {
+      throw initialError;
+    }
+  }
 }
 
 export async function githubGet(path, token) {

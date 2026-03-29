@@ -91,6 +91,7 @@ Optional routing and model controls:
 - `AI_PROVIDER_STEP=...`
 - `AI_PROVIDER_EDIT_SELECT=...`
 - `AI_PROVIDER_EDIT=...`
+- `AI_PROVIDER_JSON_REPAIR=...`
 - `CLAUDE_MODEL`
 - `OPENAI_MODEL`
 - `XAI_MODEL`
@@ -107,6 +108,7 @@ SHEEPER separates conversation, synthesis, and implementation lanes:
 - `AI_PROVIDER_STEP`: build-step generation during `/api/step` and `/api/preview/step`
 - `AI_PROVIDER_EDIT_SELECT`: file-selection pass during `/api/edit` and `/api/preview/edit`
 - `AI_PROVIDER_EDIT`: full edit generation during `/api/edit` and `/api/preview/edit`
+- `AI_PROVIDER_JSON_REPAIR`: fallback JSON repair when a model returns malformed structured output
 
 When `AI_PROVIDER=auto`, the internal-alpha defaults prefer:
 
