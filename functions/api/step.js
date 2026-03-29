@@ -235,11 +235,19 @@ function buildStepPrompt({
 
 ### Project Brief
 - Site Name: ${brief.name}
+- Summary: ${brief.summary || brief.purpose || 'Not specified'}
 - Domain: ${brief.domain || 'TBD'}
 - Language: ${brief.language || 'en'}
 - Purpose: ${brief.purpose || 'Not specified'}
+- Audience: ${brief.audience || 'Not specified'}
+- Primary CTA: ${brief.primaryCta || 'Not specified'}
+- Pages: ${(brief.pages || []).join(', ') || 'Home'}
+- Must-Have Sections: ${(brief.mustHaveSections || []).join(', ') || 'Not specified'}
+- Tone: ${brief.tone || 'Not specified'}
+- Style Keywords: ${(brief.styleKeywords || []).join(', ') || 'Not specified'}
 - Design Direction: ${brief.designDirection || 'Modern, clean, professional'}
 - Notes: ${brief.notes || 'None'}
+- Assumptions: ${(brief.assumptions || []).join(' | ') || 'None'}
 
 ### Build Plan Overview
 ${plan.overview || 'Progressive static site build'}

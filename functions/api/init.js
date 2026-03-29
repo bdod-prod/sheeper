@@ -1,15 +1,19 @@
-// POST /api/init
-// Creates a new SHEEPER project:
-// 1. Creates sheeper/build-{timestamp} branch on the target repo
-// 2. Commits _sheeper/brief.json with the project brief
-// 3. Calls AI to generate a build plan
-// 4. Commits _sheeper/plan.json and _sheeper/log.json
-// 5. Returns the plan for the frontend
-
 import {
-  checkAuth, jsonResponse, errorResponse, callAI, extractJson,
-  githubGet, githubPost, githubCommitFiles, githubGetFileSafe
+  checkAuth,
+  jsonResponse,
+  errorResponse,
+  callAI,
+  extractJson,
+  githubCommitFiles,
+  githubGet,
+  githubGetFileSafe,
+  githubPost
 } from './_shared.js';
+import {
+  buildIntakeRecord,
+  normalizeBrief,
+  normalizeList
+} from './_brief.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -20,20 +24,28 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const { owner, repo, brief } = body;
+    const { owner, repo } = body;
 
-    // Validate
     if (!owner || !repo) {
       return errorResponse('owner and repo are required', 400);
     }
-    if (!brief || !brief.name) {
+
+    const brief = normalizeBrief(body?.brief || {}, {
+      advanced: body?.intake?.advanced || body?.brief,
+      summary: body?.intake?.summary || body?.brief?.summary || body?.brief?.purpose,
+      assumptions: body?.intake?.assumptions || body?.brief?.assumptions,
+      inputMode: body?.brief?.inputMode || body?.intake?.inputMode,
+      fallbackName: repo
+    });
+
+    if (!brief.name) {
       return errorResponse('brief.name is required', 400);
     }
 
+    const intakeRecord = buildIntakeRecord(body?.intake || {}, brief);
     const token = env.GITHUB_TOKEN;
     const branchName = `sheeper/build-${Date.now()}`;
 
-    // Step 1: Get main branch SHA (try main, then master)
     let mainSha;
     let mainBranch = 'main';
     try {
@@ -49,13 +61,11 @@ export async function onRequestPost(context) {
       }
     }
 
-    // Step 2: Create build branch
     await githubPost(`/repos/${owner}/${repo}/git/refs`, {
       ref: `refs/heads/${branchName}`,
       sha: mainSha
     }, token);
 
-    // Step 3: Check for template files in repo (README.md, decisions.md, etc.)
     const templateContext = {};
     const contextFiles = ['README.md', 'decisions.md', 'llm-authority-guide.md'];
     for (const file of contextFiles) {
@@ -65,32 +75,22 @@ export async function onRequestPost(context) {
       }
     }
 
-    // Step 4: Commit brief
-    const briefJson = {
-      name: brief.name,
-      domain: brief.domain || '',
-      language: brief.language || 'en',
-      purpose: brief.purpose || '',
-      pages: brief.pages || [],
-      designDirection: brief.designDirection || '',
-      templateRepo: brief.templateRepo || '',
-      notes: brief.notes || '',
-      createdAt: new Date().toISOString()
-    };
-
     await githubCommitFiles(owner, repo, branchName, [
       {
         path: '_sheeper/brief.json',
-        content: JSON.stringify(briefJson, null, 2)
+        content: JSON.stringify(brief, null, 2)
+      },
+      {
+        path: '_sheeper/intake.json',
+        content: JSON.stringify(intakeRecord, null, 2)
       }
     ], 'sheeper: initialize project brief', token);
 
-    // Step 5: Generate build plan via AI
     const templateContextStr = Object.entries(templateContext)
       .map(([path, content]) => `--- ${path} ---\n${content}`)
       .join('\n\n');
 
-    const planPrompt = buildPlanPrompt(briefJson, templateContextStr);
+    const planPrompt = buildPlanPrompt(brief, templateContextStr);
     const { text: planText, provider } = await callAI(env, planPrompt.messages, {
       system: planPrompt.system,
       maxTokens: 4000,
@@ -101,25 +101,22 @@ export async function onRequestPost(context) {
     try {
       plan = extractJson(planText);
     } catch {
-      // Fallback: generate a reasonable default plan
-      plan = defaultPlan(briefJson);
+      plan = defaultPlan(brief);
     }
 
-    // Ensure plan has required structure
     if (!plan.steps || !Array.isArray(plan.steps)) {
-      plan = defaultPlan(briefJson);
+      plan = defaultPlan(brief);
     }
 
-    // Add IDs to steps if missing
-    plan.steps = plan.steps.map((step, i) => ({
-      id: step.id || `step-${i + 1}`,
-      name: step.name || `Step ${i + 1}`,
+    plan.steps = plan.steps.map((step, index) => ({
+      id: step.id || `step-${index + 1}`,
+      name: step.name || `Step ${index + 1}`,
       description: step.description || '',
-      files: step.files || [],
+      files: Array.isArray(step.files) ? step.files : [],
+      dependsOn: Array.isArray(step.dependsOn) ? step.dependsOn : [],
       ...step
     }));
 
-    // Step 6: Commit plan and empty log
     const log = {
       currentStep: 0,
       completedSteps: [],
@@ -138,11 +135,11 @@ export async function onRequestPost(context) {
       }
     ], 'sheeper: generate build plan', token);
 
-    // Return
     return jsonResponse({
       branch: branchName,
       mainBranch,
-      brief: briefJson,
+      brief,
+      intake: intakeRecord,
       plan,
       log,
       provider
@@ -154,31 +151,37 @@ export async function onRequestPost(context) {
   }
 }
 
-// === PROMPTS ===
-
 function buildPlanPrompt(brief, templateContext) {
-  const system = `You are SHEEPER, an AI that builds websites from natural language briefs. You create structured build plans that break site generation into logical steps. Each step should produce a coherent set of files that build on previous steps. Keep steps focused — 1-4 files each. The final step should always be SEO/optimization.`;
+  const system = `You are SHEEPER, an AI website builder that turns canonical briefs into staged build plans. Each step should leave the site in a coherent, reviewable state. Keep the plan practical for a static HTML site and avoid unnecessary fragmentation.`;
 
   const content = `Create a build plan for this website project.
 
-## Project Brief
+## Canonical Brief
 - Name: ${brief.name}
+- Summary: ${brief.summary || 'Not specified'}
+- Purpose: ${brief.purpose || 'Not specified'}
+- Audience: ${brief.audience || 'Not specified'}
+- Primary CTA: ${brief.primaryCta || 'Not specified'}
+- Input Mode: ${brief.inputMode || 'guided'}
 - Domain: ${brief.domain || 'TBD'}
 - Language: ${brief.language || 'en'}
-- Purpose: ${brief.purpose || 'Not specified'}
-- Requested Pages: ${(brief.pages || []).join(', ') || 'Not specified'}
+- Pages: ${(brief.pages || []).join(', ') || 'Home'}
+- Must-Have Sections: ${(brief.mustHaveSections || []).join(', ') || 'Not specified'}
+- Tone: ${brief.tone || 'Not specified'}
+- Style Keywords: ${(brief.styleKeywords || []).join(', ') || 'Not specified'}
 - Design Direction: ${brief.designDirection || 'Not specified'}
 - Notes: ${brief.notes || 'None'}
+- Assumptions: ${(brief.assumptions || []).join(' | ') || 'None'}
 
 ${templateContext ? `## Existing Project Context\n${templateContext}` : ''}
 
 ## Instructions
-Create a build plan as a JSON object. The plan should have 4-8 steps that progressively build a complete static HTML website. Each step commits working files — the site should be functional after each step.
+Create a build plan as JSON. The plan should have 3-7 steps that progressively build a strong first version of the site. For one-page sites, expand index.html over multiple steps rather than inventing unnecessary extra pages. For multi-page sites, group pages logically.
 
-Respond ONLY with JSON (no markdown, no backticks):
+Respond ONLY with JSON:
 {
-  "overview": "Brief description of the build approach",
-  "estimatedFiles": 12,
+  "overview": "Short description of the build approach",
+  "estimatedFiles": 8,
   "steps": [
     {
       "id": "step-1",
@@ -186,25 +189,18 @@ Respond ONLY with JSON (no markdown, no backticks):
       "description": "What this step creates and why",
       "files": ["index.html", "styles.css"],
       "dependsOn": []
-    },
-    {
-      "id": "step-2",
-      "name": "Core Pages",
-      "description": "...",
-      "files": ["about.html", "services.html"],
-      "dependsOn": ["step-1"]
     }
   ]
 }
 
 Guidelines:
-- Step 1 should always be foundation (index.html + CSS + shared assets)
-- Group related pages together
-- Last step should be SEO optimization (sitemap.xml, robots.txt, JSON-LD, meta tags review)
-- Static HTML site — no frameworks, no build tools
-- Self-hosted fonts for GDPR compliance
-- WebP images with lazy loading
-- Clean URLs (no .html in links)`;
+- Step 1 should establish the visual system and the core homepage shell.
+- Every step should keep the repo in a functional state.
+- Use static HTML, CSS, and minimal JS only.
+- The final step should be polish and SEO.
+- Prefer meaningful consolidation over lots of tiny steps.
+- If the brief implies a single-page site, keep the main build centered on index.html.
+- Include supporting assets only when they materially help the build.`;
 
   return {
     system,
@@ -213,40 +209,77 @@ Guidelines:
 }
 
 function defaultPlan(brief) {
-  const pages = brief.pages || ['Home', 'About', 'Contact'];
+  const pages = normalizeList(brief.pages).length ? normalizeList(brief.pages) : ['Home'];
+  const sections = normalizeList(brief.mustHaveSections);
+  const singlePage = pages.length <= 1;
+
   const steps = [
     {
       id: 'step-1',
       name: 'Foundation',
-      description: 'Homepage, global CSS, shared layout structure',
-      files: ['index.html', 'styles.css']
+      description: 'Establish the homepage shell, design system, and shared visual language.',
+      files: ['index.html', 'styles.css'],
+      dependsOn: []
     }
   ];
 
-  // Group remaining pages into steps of 2-3
-  const otherPages = pages.filter(p => p.toLowerCase() !== 'home');
-  for (let i = 0; i < otherPages.length; i += 2) {
-    const group = otherPages.slice(i, i + 2);
-    const stepNum = steps.length + 1;
+  if (singlePage) {
     steps.push({
-      id: `step-${stepNum}`,
-      name: group.join(' & '),
-      description: `Create ${group.join(' and ')} pages`,
-      files: group.map(p => `${p.toLowerCase().replace(/\s+/g, '-')}.html`)
+      id: 'step-2',
+      name: 'Core sections',
+      description: `Build the primary one-page experience around ${formatList(sections, 'the main content sections')}.`,
+      files: ['index.html'],
+      dependsOn: ['step-1']
     });
+  } else {
+    const supportingPages = pages
+      .filter((page) => page.toLowerCase() !== 'home')
+      .slice(0, 4)
+      .map((page) => `${slugify(page)}.html`);
+
+    steps.push({
+      id: 'step-2',
+      name: 'Core pages',
+      description: 'Create the main page flow and the first round of supporting pages.',
+      files: ['index.html', ...supportingPages.slice(0, 2)],
+      dependsOn: ['step-1']
+    });
+
+    if (supportingPages.length > 2) {
+      steps.push({
+        id: 'step-3',
+        name: 'Supporting pages',
+        description: 'Add the remaining supporting pages and connect navigation cleanly.',
+        files: supportingPages.slice(2),
+        dependsOn: ['step-2']
+      });
+    }
   }
 
-  // Final SEO step
   steps.push({
     id: `step-${steps.length + 1}`,
-    name: 'SEO & Polish',
-    description: 'Sitemap, robots.txt, JSON-LD structured data, meta tags, performance optimization',
-    files: ['sitemap.xml', 'robots.txt']
+    name: 'Polish and SEO',
+    description: 'Tighten metadata, polish copy hierarchy, and add SEO essentials.',
+    files: ['index.html', 'sitemap.xml', 'robots.txt'],
+    dependsOn: [steps[steps.length - 1].id]
   });
 
   return {
-    overview: `Build ${brief.name} as a static HTML site with ${pages.length} pages`,
-    estimatedFiles: pages.length + 4,
+    overview: `Build ${brief.name} as a ${singlePage ? 'focused one-page' : 'multi-page'} static website.`,
+    estimatedFiles: singlePage ? 4 : Math.max(6, pages.length + 3),
     steps
   };
+}
+
+function formatList(items, fallback) {
+  if (!items.length) return fallback;
+  return items.join(', ');
+}
+
+function slugify(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'page';
 }

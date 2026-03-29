@@ -12,8 +12,10 @@ sheeper_cloudflare_pages_repo/
 |- app.js
 |- functions/
 |  `- api/
+|     |- _brief.js
 |     |- _shared.js
 |     |- auth.js
+|     |- intake.js
 |     |- init.js
 |     |- status.js
 |     |- step.js
@@ -28,11 +30,12 @@ sheeper_cloudflare_pages_repo/
 
 ## What this app does
 
-SHEEPER is a natural-language interface for building and editing static websites.
+SHEEPER is a conversational interface for building and editing static websites.
 
-- `index.html` and `app.js` provide the UI.
-- `functions/api/*` implements Cloudflare Pages Functions endpoints.
-- Build sessions store state inside the target site's `_sheeper/` folder on staging branches.
+- `index.html` and `app.js` provide the operator UI.
+- `functions/api/intake.js` handles the conversational intake loop.
+- `functions/api/init.js` turns the confirmed brief into a branch, `_sheeper/` state, and a build plan.
+- Build sessions store both the canonical brief and intake transcript inside the target site's `_sheeper/` folder on staging branches.
 
 ## Expected environment variables
 
@@ -45,6 +48,8 @@ SHEEPER is a natural-language interface for building and editing static websites
 Optional routing and model controls:
 
 - `AI_PROVIDER=auto|claude|openai|grok`
+- `AI_PROVIDER_INTAKE_CHAT=...`
+- `AI_PROVIDER_BRIEF_COMPILE=...`
 - `AI_PROVIDER_PLAN=...`
 - `AI_PROVIDER_STEP=...`
 - `AI_PROVIDER_EDIT_SELECT=...`
@@ -57,28 +62,21 @@ See `.dev.vars.example` for local naming.
 
 ## AI provider routing
 
-Default behavior is unchanged:
+SHEEPER now separates intake, synthesis, and implementation lanes:
 
-- `auto` prefers Claude
-- then falls back to OpenAI
-- then falls back to Grok if `XAI_API_KEY` is configured
-
-You can force a provider globally with `AI_PROVIDER`, or only for certain SHEEPER tasks:
-
-- `AI_PROVIDER_PLAN`: branch planning during `/api/init`
+- `AI_PROVIDER_INTAKE_CHAT`: conversational intake triage during `/api/intake`
+- `AI_PROVIDER_BRIEF_COMPILE`: canonical brief compilation during `/api/intake`
+- `AI_PROVIDER_PLAN`: build planning during `/api/init`
 - `AI_PROVIDER_STEP`: full build-step generation during `/api/step`
-- `AI_PROVIDER_EDIT_SELECT`: cheap file-selection pass during `/api/edit`
+- `AI_PROVIDER_EDIT_SELECT`: file-selection pass during `/api/edit`
 - `AI_PROVIDER_EDIT`: full edit generation during `/api/edit`
 
-Recommended first benchmark setup:
+When `AI_PROVIDER=auto`, the built-in alpha defaults prefer:
 
-```bash
-AI_PROVIDER=auto
-AI_PROVIDER_PLAN=grok
-AI_PROVIDER_EDIT_SELECT=grok
-```
+- fast lane for `intake_chat` and `edit_select`
+- highest-quality lane for `brief_compile`, `plan`, `step`, and `edit`
 
-That keeps expensive file generation on the existing providers while testing Grok on lower-risk tasks first.
+You can still force a provider globally with `AI_PROVIDER`, or override individual tasks with the task-specific variables above.
 
 ## Deployment assumption
 
@@ -96,7 +94,8 @@ This layout targets **Cloudflare Pages + Pages Functions**:
 - Local commits created and pushed
 - Cloudflare Pages project `sheeper` created
 - Local Cloudflare Pages dev smoke test passed for `/` and `/api/auth`
-- Deployment still needs real project secrets before the hosted app can work end-to-end
+- Conversational intake is now the primary project-start path
+- `_sheeper/intake.json` persists the intake transcript and compiled-brief provenance once build starts
 - GitHub remote configured as `origin`
 - Published to public GitHub repo `bdod-prod/sheeper`
 
@@ -118,8 +117,7 @@ Branch status:
 - Pages project: `sheeper`
 - Default URL: `https://sheeper.pages.dev`
 - Git integration: not connected yet
-- Pages secrets configured: none yet
-- Deployments created: none yet
+- Pages secrets and deployments should be checked in Cloudflare before relying on the hosted app for live tests
 
 ## Local development
 

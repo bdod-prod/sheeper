@@ -1,10 +1,9 @@
-// POST /api/status
-// Reads project state from git: brief, plan, log
-// This is how sessions resume — all state lives in the branch
-
 import {
-  checkAuth, jsonResponse, errorResponse,
-  githubGetFileSafe, githubGetTree
+  checkAuth,
+  jsonResponse,
+  errorResponse,
+  githubGetFileSafe,
+  githubGetTree
 } from './_shared.js';
 
 export async function onRequestPost(context) {
@@ -22,12 +21,11 @@ export async function onRequestPost(context) {
     }
 
     const token = env.GITHUB_TOKEN;
-
-    // Read _sheeper/ files from the branch
-    const [briefRaw, planRaw, logRaw] = await Promise.all([
+    const [briefRaw, planRaw, logRaw, intakeRaw] = await Promise.all([
       githubGetFileSafe(owner, repo, '_sheeper/brief.json', branch, token),
       githubGetFileSafe(owner, repo, '_sheeper/plan.json', branch, token),
-      githubGetFileSafe(owner, repo, '_sheeper/log.json', branch, token)
+      githubGetFileSafe(owner, repo, '_sheeper/log.json', branch, token),
+      githubGetFileSafe(owner, repo, '_sheeper/intake.json', branch, token)
     ]);
 
     if (!briefRaw) {
@@ -36,21 +34,23 @@ export async function onRequestPost(context) {
 
     const brief = JSON.parse(briefRaw);
     const plan = planRaw ? JSON.parse(planRaw) : null;
-    const log = logRaw ? JSON.parse(logRaw) : { currentStep: 0, completedSteps: [], totalFiles: [] };
+    const log = logRaw
+      ? JSON.parse(logRaw)
+      : { currentStep: 0, completedSteps: [], totalFiles: [] };
+    const intake = intakeRaw ? JSON.parse(intakeRaw) : null;
 
-    // Get current file tree
     let fileTree = [];
     try {
       fileTree = await githubGetTree(owner, repo, branch, token);
     } catch {
-      // Branch might be empty
+      fileTree = [];
     }
 
-    // Filter out _sheeper/ internal files from the tree
-    const siteFiles = fileTree.filter(f => !f.startsWith('_sheeper/'));
+    const siteFiles = fileTree.filter((file) => !file.startsWith('_sheeper/'));
 
     return jsonResponse({
       brief,
+      intake,
       plan,
       log,
       siteFiles,

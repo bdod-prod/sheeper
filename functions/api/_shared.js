@@ -1,29 +1,29 @@
-// _shared.js — SHEEPER shared utilities
-// Underscore prefix = Cloudflare Pages won't expose as a route
-
 const GITHUB_API = 'https://api.github.com';
 const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
 const XAI_API = 'https://api.x.ai/v1/chat/completions';
-const AUTO_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
-const DEFAULT_AI_MODELS = {
-  claude: 'claude-sonnet-4-20250514',
-  openai: 'gpt-4o',
-  grok: 'grok-4-1-fast-reasoning'
+
+const DEFAULT_PROVIDER_ORDER = ['claude', 'openai', 'grok'];
+const TASK_PROVIDER_ORDER = {
+  intake_chat: ['grok', 'openai', 'claude'],
+  brief_compile: ['claude', 'openai', 'grok'],
+  plan: ['claude', 'openai', 'grok'],
+  step: ['claude', 'openai', 'grok'],
+  edit_select: ['grok', 'openai', 'claude'],
+  edit: ['claude', 'openai', 'grok']
 };
 
-// === AUTH ===
+const DEFAULT_AI_MODELS = {
+  claude: 'claude-opus-4-6',
+  openai: 'gpt-5.4',
+  grok: 'grok-4.20-beta-latest-non-reasoning'
+};
 
 export function checkAuth(request, env) {
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.replace('Bearer ', '');
-  if (!token || token !== env.SHEEPER_TOKEN) {
-    return false;
-  }
-  return true;
+  return Boolean(token && token === env.SHEEPER_TOKEN);
 }
-
-// === JSON RESPONSE ===
 
 export function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -39,22 +39,15 @@ export function errorResponse(message, status = 500) {
   return jsonResponse({ error: message }, status);
 }
 
-// === AI CALLS (configurable provider routing) ===
-
 export async function callAI(env, messages, {
   maxTokens = 16000,
   system = null,
   task = 'default'
 } = {}) {
-  const preferredProvider = resolveProviderPreference(env, task);
-
-  if (preferredProvider !== 'auto') {
-    return callSpecificProvider(env, preferredProvider, messages, { maxTokens, system, task });
-  }
-
+  const strategy = resolveProviderStrategy(env, task);
   const errors = [];
 
-  for (const provider of AUTO_PROVIDER_ORDER) {
+  for (const provider of strategy.providers) {
     if (!hasProviderCredentials(env, provider)) {
       continue;
     }
@@ -63,41 +56,51 @@ export async function callAI(env, messages, {
       return await callSpecificProvider(env, provider, messages, { maxTokens, system, task });
     } catch (err) {
       errors.push(`${provider}: ${err.message}`);
-      console.error(`${provider} failed during ${task}, trying next provider:`, err.message);
+      console.error(`${provider} failed during ${task}:`, err.message);
     }
   }
 
   if (!errors.length) {
+    if (strategy.strict) {
+      throw new Error(`${strategy.providers[0]} is selected for ${task}, but its API key is not configured.`);
+    }
     throw new Error('No AI API keys configured. Set CLAUDE_API_KEY, OPENAI_API_KEY, and/or XAI_API_KEY.');
   }
 
   throw new Error(`All AI providers failed for ${task}. ${errors.join(' | ')}`);
 }
 
-function resolveProviderPreference(env, task) {
+function resolveProviderStrategy(env, task) {
   const taskKey = task && task !== 'default'
     ? `AI_PROVIDER_${task.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`
     : null;
 
-  const configured = (taskKey && env[taskKey]) || env.AI_PROVIDER || 'auto';
-  const normalized = normalizeProvider(configured);
-
-  if (!normalized) {
-    throw new Error(`Unsupported AI provider "${configured}". Use auto, claude, openai, or grok.`);
+  const taskValue = normalizeProvider(taskKey ? env[taskKey] : '');
+  if (taskValue && taskValue !== 'auto') {
+    return { providers: [taskValue], strict: true };
   }
 
-  return normalized;
+  const globalValue = normalizeProvider(env.AI_PROVIDER || 'auto');
+  if (globalValue && globalValue !== 'auto') {
+    return { providers: [globalValue], strict: true };
+  }
+
+  return {
+    providers: TASK_PROVIDER_ORDER[task] || DEFAULT_PROVIDER_ORDER,
+    strict: false
+  };
 }
 
 function normalizeProvider(value) {
-  const normalized = String(value || 'auto').trim().toLowerCase();
+  const normalized = String(value || '').trim().toLowerCase();
 
+  if (!normalized) return null;
   if (normalized === 'auto') return 'auto';
   if (normalized === 'claude' || normalized === 'anthropic') return 'claude';
   if (normalized === 'openai' || normalized === 'gpt') return 'openai';
   if (normalized === 'grok' || normalized === 'xai') return 'grok';
 
-  return null;
+  throw new Error(`Unsupported AI provider "${value}". Use auto, claude, openai, or grok.`);
 }
 
 function hasProviderCredentials(env, provider) {
@@ -148,6 +151,7 @@ async function callClaude(apiKey, model, messages, { maxTokens, system }) {
     max_tokens: maxTokens,
     messages
   };
+
   if (system) {
     body.system = system;
   }
@@ -207,7 +211,7 @@ function toOpenAICompatibleMessages(messages, system) {
 
 function extractClaudeText(contentBlocks) {
   return (contentBlocks || [])
-    .map(block => extractMessageText(block?.text ?? block))
+    .map((block) => extractMessageText(block?.text ?? block))
     .filter(Boolean)
     .join('');
 }
@@ -230,7 +234,7 @@ function extractMessageText(content) {
 
   if (Array.isArray(content)) {
     return content
-      .map(part => {
+      .map((part) => {
         if (typeof part === 'string') return part;
         if (typeof part?.text === 'string') return part.text;
         if (typeof part?.content === 'string') return part.content;
@@ -251,32 +255,32 @@ function extractMessageText(content) {
   return '';
 }
 
-// === JSON EXTRACTION ===
-
 export function extractJson(text) {
-  // Direct parse
-  try { return JSON.parse(text); } catch {}
+  try {
+    return JSON.parse(text);
+  } catch {}
 
-  // Strip markdown fences
   const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  try { return JSON.parse(cleaned); } catch {}
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
 
-  // Find first { ... } block (greedy)
-  const match = text.match(/\{[\s\S]*\}/);
-  if (match) {
-    try { return JSON.parse(match[0]); } catch {}
+  const objectMatch = text.match(/\{[\s\S]*\}/);
+  if (objectMatch) {
+    try {
+      return JSON.parse(objectMatch[0]);
+    } catch {}
   }
 
-  // Find first [ ... ] block
-  const arrMatch = text.match(/\[[\s\S]*\]/);
-  if (arrMatch) {
-    try { return JSON.parse(arrMatch[0]); } catch {}
+  const arrayMatch = text.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    try {
+      return JSON.parse(arrayMatch[0]);
+    } catch {}
   }
 
   throw new Error('Could not extract JSON from AI response');
 }
-
-// === GITHUB API HELPERS ===
 
 export async function githubGet(path, token) {
   const res = await fetch(`${GITHUB_API}${path}`, {
@@ -286,10 +290,12 @@ export async function githubGet(path, token) {
       'X-GitHub-Api-Version': '2022-11-28'
     }
   });
+
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`GitHub GET ${path}: ${res.status} — ${body.substring(0, 200)}`);
+    throw new Error(`GitHub GET ${path}: ${res.status} - ${body.substring(0, 200)}`);
   }
+
   return res.json();
 }
 
@@ -304,10 +310,12 @@ export async function githubPost(path, body, token) {
     },
     body: JSON.stringify(body)
   });
+
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`GitHub POST ${path}: ${res.status} — ${errText.substring(0, 200)}`);
+    throw new Error(`GitHub POST ${path}: ${res.status} - ${errText.substring(0, 200)}`);
   }
+
   return res.json();
 }
 
@@ -322,10 +330,12 @@ export async function githubPatch(path, body, token) {
     },
     body: JSON.stringify(body)
   });
+
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`GitHub PATCH ${path}: ${res.status} — ${errText.substring(0, 200)}`);
+    throw new Error(`GitHub PATCH ${path}: ${res.status} - ${errText.substring(0, 200)}`);
   }
+
   return res.json();
 }
 
@@ -338,9 +348,11 @@ export async function githubDelete(path, token) {
       'X-GitHub-Api-Version': '2022-11-28'
     }
   });
+
   if (!res.ok && res.status !== 422) {
     throw new Error(`GitHub DELETE ${path}: ${res.status}`);
   }
+
   return res.status;
 }
 
@@ -355,9 +367,11 @@ export async function githubGetFile(owner, repo, filePath, ref, token) {
       }
     }
   );
+
   if (!res.ok) {
     throw new Error(`GitHub file ${filePath}: ${res.status}`);
   }
+
   return res.text();
 }
 
@@ -369,18 +383,12 @@ export async function githubGetFileSafe(owner, repo, filePath, ref, token) {
   }
 }
 
-// === COMMIT MULTIPLE FILES TO A BRANCH ===
-
 export async function githubCommitFiles(owner, repo, branch, files, commitMessage, token) {
-  // 1. Get branch HEAD
   const ref = await githubGet(`/repos/${owner}/${repo}/git/ref/heads/${branch}`, token);
   const headSha = ref.object.sha;
-
-  // 2. Get commit tree
   const headCommit = await githubGet(`/repos/${owner}/${repo}/git/commits/${headSha}`, token);
   const baseTreeSha = headCommit.tree.sha;
 
-  // 3. Create blobs for each file
   const treeEntries = [];
   for (const file of files) {
     const encoding = file.encoding || 'utf-8';
@@ -397,28 +405,23 @@ export async function githubCommitFiles(owner, repo, branch, files, commitMessag
     });
   }
 
-  // 4. Create new tree
   const newTree = await githubPost(`/repos/${owner}/${repo}/git/trees`, {
     base_tree: baseTreeSha,
     tree: treeEntries
   }, token);
 
-  // 5. Create commit
   const newCommit = await githubPost(`/repos/${owner}/${repo}/git/commits`, {
     message: commitMessage,
     tree: newTree.sha,
     parents: [headSha]
   }, token);
 
-  // 6. Update branch ref
   await githubPatch(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
     sha: newCommit.sha
   }, token);
 
   return newCommit.sha;
 }
-
-// === GET REPO FILE TREE ===
 
 export async function githubGetTree(owner, repo, branch, token) {
   const ref = await githubGet(`/repos/${owner}/${repo}/git/ref/heads/${branch}`, token);
@@ -429,6 +432,6 @@ export async function githubGetTree(owner, repo, branch, token) {
   );
 
   return tree.tree
-    .filter(f => f.type === 'blob')
-    .map(f => f.path);
+    .filter((file) => file.type === 'blob')
+    .map((file) => file.path);
 }
